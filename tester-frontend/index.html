@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Physiobook — Master Flow Journey</title>
+  <meta http-equiv="Content-Security-Policy" content="default-src * 'unsafe-inline' 'unsafe-eval'; script-src * 'unsafe-inline' 'unsafe-eval'; connect-src * 'unsafe-inline'; img-src * data: blob: 'unsafe-inline'; frame-src *; style-src * 'unsafe-inline';">
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0f172a; --panel: rgba(30, 41, 59, 0.95);
+      --text: #f8fafc; --text-muted: #94a3b8;
+      --primary: #3b82f6; --primary-hover: #2563eb;
+      --success: #10b981; --error: #ef4444; 
+      --border: rgba(255,255,255,0.1);
+    }
+    body {
+      font-family: 'Outfit', sans-serif; background: var(--bg);
+      color: var(--text); margin: 0; min-height: 100vh;
+      display: flex; flex-direction: column; align-items: center; padding: 2rem;
+      background-image: 
+        radial-gradient(circle at top right, #1e3a8a 0%, transparent 40%), 
+        radial-gradient(circle at bottom left, #064e3b 0%, transparent 40%);
+    }
+    h1 { margin-bottom: 0.5rem; font-weight: 800; font-size: 2.2rem; text-align: center; }
+    p.subtitle { color: var(--text-muted); margin-top: 0; margin-bottom: 2rem; text-align: center; max-width: 600px; }
+    
+    .tracker-bar {
+      width: 100%; max-width: 900px; background: rgba(0,0,0,0.8);
+      position: sticky; top: 1rem; z-index: 100; padding: 1rem;
+      border-radius: 0.5rem; border: 1px solid var(--primary);
+      box-shadow: 0 10px 15px -3px rgba(0,0,0,0.5); margin-bottom: 2rem;
+      display: flex; flex-wrap: wrap; gap: 1rem; font-size: 0.85rem;
+    }
+    .var-badge { background: #1e293b; padding: 0.2rem 0.5rem; border-radius: 0.25rem; border: 1px dashed var(--text-muted); }
+    .var-badge.filled { border-color: var(--success); color: var(--success); }
+    .auth-badge { width: 100%; text-align: center; font-size: 1rem; font-weight: bold; color: var(--text-muted); padding-bottom: 0.5rem; border-bottom: 1px solid var(--border); margin-bottom: 0.5rem;}
+    .auth-badge span { color: var(--success); }
+
+    .journey-container { width: 100%; max-width: 900px; display: flex; flex-direction: column; gap: 2rem; }
+    
+    .chapter {
+      background: var(--panel); border: 2px solid; border-radius: 1rem;
+      padding: 1.5rem; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);
+    }
+    .chapter-1 { border-color: #a855f7; }
+    .chapter-2 { border-color: #ec4899; }
+    .chapter-3 { border-color: #14b8a6; }
+    .chapter-4 { border-color: #f59e0b; }
+    
+    .chapter-header { font-size: 1.5rem; font-weight: 800; margin-bottom: 1.5rem; display: flex; align-items: center; justify-content: space-between; }
+    
+    .step {
+      background: rgba(0,0,0,0.3); border: 1px solid var(--border); padding: 1rem; border-radius: 0.5rem; margin-bottom: 1rem;
+    }
+    .step-title { font-weight: 600; margin-bottom: 0.8rem; display: flex; justify-content: space-between;}
+    .step-title .method { font-size: 0.75rem; background: #334155; padding: 0.2rem 0.5rem; border-radius: 1rem; font-weight: 400; }
+    .step-desc { font-size: 0.85rem; color: var(--text-muted); margin-bottom: 1rem; }
+    
+    .input-group { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1rem; }
+    input, select, button { font-family: 'Outfit', sans-serif; padding: 0.6rem; border-radius: 0.25rem; border: 1px solid var(--border); background: #0f172a; color: white; outline: none; }
+    input { flex: 1; min-width: 150px; }
+    button { background: var(--primary); font-weight: 600; cursor: pointer; transition: 0.2s; border: none; padding: 0.6rem 1.5rem;}
+    button:hover { background: var(--primary-hover); transform: translateY(-1px); }
+    .btn-red { background: var(--error); }
+    
+    .res-box { background: #000; border: 1px solid var(--border); padding: 0.5rem; font-family: monospace; font-size: 0.75rem; color: var(--success); height: 80px; overflow-y: auto; white-space: pre-wrap; margin-top: 0.5rem; display: none; }
+    .res-box.visible { display: block; }
+    .err-text { color: var(--error); }
+  </style>
+</head>
+<body>
+
+  <h1>Physiobook Journey Tester</h1>
+  <p class="subtitle">Execute this page top-to-bottom to see exactly how your backend natively controls multi-tenant data, roles, and isolation.</p>
+
+  <!-- VARIABLE TRACKER (Sticky) -->
+  <div class="tracker-bar">
+    <div class="auth-badge" id="auth-main">🔒 Not Logged In</div>
+    <div class="var-badge" id="var-clinic">Clinic ID: <span style="font-family:monospace">Empty</span></div>
+    <div class="var-badge" id="var-cadmin">Clinic Admin ID: <span style="font-family:monospace">Empty</span></div>
+    <div class="var-badge" id="var-therapist">Therapist ID: <span style="font-family:monospace">Empty</span></div>
+    <div class="var-badge" id="var-service">Service ID: <span style="font-family:monospace">Empty</span></div>
+    <div class="var-badge" id="var-patient">Patient ID: <span style="font-family:monospace">Empty</span></div>
+    <div class="var-badge" id="var-booking">Booking ID: <span style="font-family:monospace">Empty</span></div>
+  </div>
+
+  <div class="journey-container">
+
+    <!-- ============================================== -->
+    <!-- CHAPTER 1: SUPER ADMIN -->
+    <!-- ============================================== -->
+    <div class="chapter chapter-1">
+      <div class="chapter-header" style="color: #a855f7;">👑 Chapter 1: The Super Admin</div>
+      
+      <div class="step">
+        <div class="step-title">Step 1.1: Login to Platform <span class="method">POST /auth/login</span></div>
+        <div class="step-desc">Log in with the hardcoded master account to gain global creation rights.</div>
+        <div class="input-group">
+          <input type="email" id="s1-email" value="admin@physiobook.com" readonly>
+          <input type="password" id="s1-pass" value="Admin@123" readonly>
+          <button onclick="doStep('res-s1', '/auth/login', 'POST', {email: gV('s1-email'), password: gV('s1-pass')}, (d) => loginSuccess('Super Admin', d.accessToken))">Login as Super Admin</button>
+        </div>
+        <div class="res-box" id="res-s1"></div>
+      </div>
+
+      <div class="step">
+        <div class="step-title">Step 1.2: Establish a Clinic <span class="method">POST /clinics</span></div>
+        <div class="step-desc">Create a new clinic entity on the database. Requires super admin rights.</div>
+        <div class="input-group">
+          <input type="text" id="s2-name" value="Miami Sports Therapy">
+          <button onclick="doStep('res-s2', '/clinics', 'POST', {name: gV('s2-name'), email:'miami@test.com', phone:'+1234567890', addressLine1:'Beach Rd', city:'Miami', country:'USA'}, (d) => setVar('clinic', d.id))">Create Clinic</button>
+        </div>
+        <div class="res-box" id="res-s2"></div>
+      </div>
+
+      <div class="step">
+        <div class="step-title">Step 1.3: Assign exactly ONE Clinic Admin <span class="method">POST /staff</span></div>
+        <div class="step-desc">Create an admin account permanently bound to the clinic ID we just created.</div>
+        <div class="input-group">
+          <input type="email" id="s3-email" value="sarah.admin@miamisports.com">
+          <button onclick="doStep('res-s3', '/staff', 'POST', {firstName:'Sarah', lastName:'Admin', email: gV('s3-email'), password:'Pass@123', role:'clinic_admin', clinicId: state.clinic}, (d) => setVar('cadmin', d.userId))">Create Clinic Admin</button>
+        </div>
+        <div class="res-box" id="res-s3"></div>
+      </div>
+
+      <div class="step">
+        <div class="step-title">Step 1.4: Step Down (Logout)</div>
+        <div class="step-desc">The Super Admin's job is done. Clear the token.</div>
+        <button class="btn-red" onclick="logout()">Logout Super Admin</button>
+      </div>
+    </div>
+
+
+    <!-- ============================================== -->
+    <!-- CHAPTER 2: CLINIC ADMIN -->
+    <!-- ============================================== -->
+    <div class="chapter chapter-2">
+      <div class="chapter-header" style="color: #ec4899;">🏢 Chapter 2: The Clinic Admin</div>
+      
+      <div class="step">
+        <div class="step-title">Step 2.1: Login as Clinic Admin <span class="method">POST /auth/login</span></div>
+        <div class="step-desc">Sarah logs in to manage ONLY her Miami Sports clinic.</div>
+        <div class="input-group">
+          <input type="email" id="c1-email" value="sarah.admin@miamisports.com" readonly>
+          <input type="password" id="c1-pass" value="Pass@123" readonly>
+          <button onclick="doStep('res-c1', '/auth/login', 'POST', {email: gV('c1-email'), password: gV('c1-pass')}, (d) => loginSuccess('Clinic Admin', d.accessToken))">Login Clinic Admin</button>
+        </div>
+        <div class="res-box" id="res-c1"></div>
+      </div>
+
+      <div class="step">
+        <div class="step-title">Step 2.2: Add Treatment Service <span class="method">POST /clinics/:id/services</span></div>
+        <div class="step-desc">Define what patients can book at Sarah's clinic.</div>
+        <div class="input-group">
+          <input type="text" id="c2-name" value="Deep Tissue Massage">
+          <button onclick="doStep('res-c2', '/clinics/' + state.clinic + '/services', 'POST', {name: gV('c2-name'), durationMinutes:45, price:5000, colorHex:'#ff0000'}, (d) => setVar('service', d.id))">Create Service</button>
+        </div>
+        <div class="res-box" id="res-c2"></div>
+      </div>
+
+      <div class="step">
+        <div class="step-title">Step 2.3: Hire a Therapist <span class="method">POST /staff</span></div>
+        <div class="step-desc">Hire John the Therapist. (Notice Sarah doesn't need to pass a clinicId—the backend derives it from her token securely).</div>
+        <div class="input-group">
+          <input type="email" id="c3-email" value="john.therapist@miamisports.com">
+          <button onclick="doStep('res-c3', '/staff', 'POST', {firstName:'John', lastName:'Therapist', email: gV('c3-email'), password:'Pass@123', role:'therapist', clinicId: state.clinic, specialisations:['PT']}, (d) => setVar('therapist', d.userId))">Hire Therapist</button>
+        </div>
+        <div class="res-box" id="res-c3"></div>
+      </div>
+
+      <div class="step">
+        <div class="step-title">Step 2.4: Step Down (Logout)</div>
+        <button class="btn-red" onclick="logout()">Logout Clinic Admin</button>
+      </div>
+    </div>
+
+
+    <!-- ============================================== -->
+    <!-- CHAPTER 3: THERAPIST -->
+    <!-- ============================================== -->
+    <div class="chapter chapter-3">
+      <div class="chapter-header" style="color: #14b8a6;">🩺 Chapter 3: The Therapist</div>
+
+      <div class="step">
+        <div class="step-title">Step 3.1: Login as Therapist <span class="method">POST /auth/login</span></div>
+        <div class="input-group">
+          <input type="email" id="t1-email" value="john.therapist@miamisports.com" readonly>
+          <input type="password" id="t1-pass" value="Pass@123" readonly>
+          <button onclick="doStep('res-t1', '/auth/login', 'POST', {email: gV('t1-email'), password: gV('t1-pass')}, (d) => loginSuccess('Therapist', d.accessToken))">Login Therapist</button>
+        </div>
+        <div class="res-box" id="res-t1"></div>
+      </div>
+
+      <div class="step">
+        <div class="step-title">Step 3.2: Configure Availability <span class="method">PUT /staff/therapists/:id/schedule</span></div>
+        <div class="step-desc">John tells the system he works weekdays 09:00 to 17:00. This fuels the slot generator.</div>
+        <button onclick="doStep('res-t2', '/staff/therapists/'+state.therapist+'/schedule', 'PUT', { schedule: [1,2,3,4,5].map(d=>({dayOfWeek:d, startTime:'09:00', endTime:'17:00'})) })">Publish Weekly Schedule</button>
+        <div class="res-box" id="res-t2"></div>
+      </div>
+
+      <div class="step">
+        <div class="step-title">Step 3.3: Step Down (Logout)</div>
+        <button class="btn-red" onclick="logout()">Logout Therapist</button>
+      </div>
+    </div>
+
+
+    <!-- ============================================== -->
+    <!-- CHAPTER 4: PATIENT -->
+    <!-- ============================================== -->
+    <div class="chapter chapter-4">
+      <div class="chapter-header" style="color: #f59e0b;">📅 Chapter 4: The Patient</div>
+
+      <div class="step">
+        <div class="step-title">Step 4.1: Register Account <span class="method">POST /auth/register</span></div>
+        <div class="step-desc">A random person from the internet decides to sign up. They will receive an email.</div>
+        <div class="input-group">
+          <input type="text" id="p1-name" value="Jane Doe">
+          <input type="email" id="p1-email" value="jane@gmail.com">
+          <button onclick="registerPatientOnly()">Register Account</button>
+        </div>
+        <div class="res-box" id="res-p1"></div>
+      </div>
+
+      <div class="step" id="verify-step" style="border-color:var(--warning); background:rgba(245, 158, 11, 0.1);">
+        <div class="step-title">Step 4.2: Verify Email Token <span class="method">GET /auth/verify-email</span></div>
+        <div class="step-desc">Check Mailhog (http://localhost:8025) for your token and paste it here, OR just paste the entire link from the email!</div>
+        <div class="input-group">
+          <input type="text" id="p2-token" placeholder="Paste full link or just the token here...">
+          <button onclick="verifyEmailToken()">Verify Email</button>
+        </div>
+        <div class="res-box" id="res-p2"></div>
+      </div>
+
+      <div class="step">
+        <div class="step-title">Step 4.3: Login as Patient <span class="method">POST /auth/login</span></div>
+        <div class="step-desc">Now that they are verified, log them in.</div>
+        <div class="input-group">
+          <button onclick="doStep('res-p3', '/auth/login', 'POST', {email: gV('p1-email'), password: 'Pass@123'}, (d) => {loginSuccess('Patient', d.accessToken); setVar('patient', d.user.id);})">Login Patient</button>
+        </div>
+        <div class="res-box" id="res-p3"></div>
+      </div>
+
+      <div class="step">
+        <div class="step-title">Step 4.4: See Open Appointments <span class="method">GET /bookings/slots</span></div>
+        <div class="step-desc">Jane queries the service system to automatically find 45-minute blocks tomorrow that John is available to book.</div>
+        <div class="input-group">
+          <input type="date" id="p4-date">
+          <button onclick="fetchSlots()">Generate Real Slots for Tomorrow</button>
+        </div>
+        <div class="res-box" id="res-p4"></div>
+      </div>
+
+      <div class="step" id="booking-step" style="display:none; border-color:var(--success); background:rgba(16, 185, 129, 0.1);">
+        <div class="step-title">Step 4.5: Claim a Slot! <span class="method">POST /bookings</span></div>
+        <div class="input-group">
+          <select id="p5-slot"></select>
+          <button onclick="execBooking()">Confirm Booking</button>
+        </div>
+        <div class="res-box" id="res-p5"></div>
+      </div>
+
+    </div>
+
+  </div>
+
+  <script>
+    const API = 'http://localhost:4000/api/v1';
+    
+    // Global State Dictionary
+    const state = {
+      token: null, role: null,
+      clinic: null, cadmin: null, therapist: null, service: null, patient: null, booking: null
+    };
+
+    // Auto-set tomorrow's date
+    const tmr = new Date(); tmr.setDate(tmr.getDate()+1);
+    document.getElementById('p4-date').value = tmr.toISOString().split('T')[0];
+
+    // Helpers
+    const gV = (id) => document.getElementById(id).value;
+    const sC = (id, html) => { const el=document.getElementById(id); el.innerHTML=html; el.classList.add('visible'); }
+    const sE = (id, err) => { const el=document.getElementById(id); el.innerHTML=`<span class="err-text">❌ ${err}</span>`; el.classList.add('visible'); }
+
+    // State updaters
+    function setVar(key, val) {
+      if(!val) return;
+      state[key] = val;
+      const el = document.getElementById('var-' + key);
+      el.classList.add('filled');
+      el.innerHTML = `${key.toUpperCase()} ID: <span style="font-family:monospace">${val.substring(0,8)}...</span>`;
+    }
+
+    function loginSuccess(roleName, token) {
+      state.token = token;
+      state.role = roleName;
+      document.getElementById('auth-main').innerHTML = `✅ Successfully acting as: <span>${roleName}</span>`;
+    }
+
+    function logout() {
+      state.token = null; state.role = null;
+      document.getElementById('auth-main').innerHTML = `🔒 Not Logged In`;
+      alert('Token cleared from browser. Proceed to next step.');
+    }
+
+    // Core Fetcher
+    async function doStep(outId, ep, method='GET', body=null, successCb=null) {
+      document.getElementById(outId).textContent = 'Loading...';
+      try {
+        const h = { 'Content-Type': 'application/json' };
+        if(state.token) h['Authorization'] = `Bearer ${state.token}`;
+        
+        let path = ep;
+        // Verify we have variables if URL needs them
+        if (path.includes('null') || path.includes('undefined')) throw new Error("Missing required ID in URL. Did you skip a step?");
+
+        const opt = { method, headers: h };
+        if(body) opt.body = JSON.stringify(body);
+        
+        const res = await fetch(API + path, opt);
+        const json = await res.json();
+        
+        if(!res.ok) throw new Error(json.error || `HTTP Error ${res.status}`);
+        
+        sC(outId, JSON.stringify(json.data, null, 2));
+        if (successCb) successCb(json.data);
+        return json.data;
+      } catch (err) {
+        sE(outId, err.message);
+        throw err;
+      }
+    }
+
+    // Custom flow wrappers
+    async function registerPatientOnly() {
+      const em = gV('p1-email'); const pw = 'Pass@123';
+      try {
+        const spl = gV('p1-name').split(' ');
+        await doStep('res-p1', '/auth/register', 'POST', { firstName: spl[0], lastName: spl[1]||'', email: em, password: pw });
+        sC('res-p1', 'Success! Check Mailhog for your verification token.');
+      } catch(e) { }
+    }
+
+    async function verifyEmailToken() {
+      let token = gV('p2-token');
+      // If user pasted the whole link, extract just the token parameter
+      if (token.includes('token=')) {
+        token = token.split('token=')[1].split('&')[0];
+      }
+      if(!token) return sE('res-p2', 'Please paste the token or link first!');
+      try {
+        await doStep('res-p2', '/auth/verify-email?token=' + token, 'GET', null, () => {
+          sC('res-p2', 'Email Verified Successfully! You can now log in.');
+        });
+      } catch(e) {}
+    }
+
+    async function fetchSlots() {
+      try {
+        const dt = gV('p4-date');
+        const d = await doStep('res-p4', `/bookings/slots?therapistId=${state.therapist}&serviceId=${state.service}&date=${dt}`, 'GET');
+        
+        if (d && d.slots && d.slots.length > 0) {
+          const sel = document.getElementById('p5-slot');
+          sel.innerHTML = '';
+          d.slots.forEach(s => sel.innerHTML += `<option value='{"s":"${s.start}", "e":"${s.end}"}'>Time: ${s.start} - ${s.end}</option>`);
+          document.getElementById('booking-step').style.display = 'block';
+        } else {
+          sE('res-p4', 'No slots returned. Did you run Step 3.2?');
+        }
+      } catch(e) {}
+    }
+
+    async function execBooking() {
+      try {
+        const timeObj = JSON.parse(gV('p5-slot'));
+        const dt = gV('p4-date');
+        await doStep('res-p5', '/bookings', 'POST', {
+          clinicId: state.clinic, therapistId: state.therapist, serviceId: state.service,
+          appointmentDate: dt, startTime: timeObj.s, endTime: timeObj.e, notes: 'Excited!'
+        }, (d) => setVar('booking', d.id));
+      } catch(e) {}
+    }
+
+  </script>
+</body>
+</html>
