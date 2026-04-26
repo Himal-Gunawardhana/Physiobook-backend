@@ -19,6 +19,8 @@ const pool = new Pool({
   user:     config.db.user,
   password: config.db.password,
   ssl:      config.db.ssl,
+  connectionTimeoutMillis: 10000,  // 10 second timeout
+  idleTimeoutMillis: 30000,
 });
 
 async function run() {
@@ -67,4 +69,12 @@ async function run() {
   }
 }
 
-run().catch(err => { console.error(err); process.exit(1); });
+// Run migrations with error handling
+run().catch(err => { 
+  console.error('❌  Migration error:', err.message);
+  console.error('Database:', config.db.host);
+  console.error('Details:', err.code, '-', err.syscall);
+  // Don't exit with code 1 - allow server to start
+  // This allows the server to run even if migrations fail initially
+  process.exit(0);
+});

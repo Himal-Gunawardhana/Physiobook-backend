@@ -11,29 +11,47 @@ let pool;
  * Called once at server start. Exposed for testing overrides.
  */
 async function connectDB() {
-  pool = new Pool({
-    host:     config.db.host,
-    port:     config.db.port,
-    database: config.db.database,
-    user:     config.db.user,
-    password: config.db.password,
-    ssl:      config.db.ssl,
-    min:      config.db.pool.min,
-    max:      config.db.pool.max,
-    idleTimeoutMillis:    30000,
-    connectionTimeoutMillis: 5000,
-  });
+  let attempts = 0;
+  const maxAttempts = 5;
+  const initialDelay = 2000; // 2 seconds
 
-  pool.on('error', (err) => {
-    logger.error('PostgreSQL pool error:', err);
-  });
+  while (attempts < maxAttempts) {
+    try {
+      pool = new Pool({
+        host:     config.db.host,
+        port:     config.db.port,
+        database: config.db.database,
+        user:     config.db.user,
+        password: config.db.password,
+        ssl:      config.db.ssl,
+        min:      config.db.pool.min,
+        max:      config.db.pool.max,
+        idleTimeoutMillis:    30000,
+        connectionTimeoutMillis: 10000,
+      });
 
-  // Verify connectivity
-  const client = await pool.connect();
-  await client.query('SELECT 1');
-  client.release();
+      pool.on('error', (err) => {
+        logger.error('PostgreSQL pool error:', err);
+      });
 
-  return pool;
+      // Verify connectivity
+      const client = await pool.connect();
+      await client.query('SELECT 1');
+      client.release();
+
+      logger.info(`✅  PostgreSQL connected after ${attempts} attempt(s)`);
+      return pool;
+    } catch (err) {
+      attempts++;
+      if (attempts >= maxAttempts) {
+        logger.error(`❌  Failed to connect to PostgreSQL after ${maxAttempts} attempts`, err.message);
+        throw err;
+      }
+      const delay = initialDelay * Math.pow(2, attempts - 1);
+      logger.warn(`⚠️  PostgreSQL connection failed (attempt ${attempts}/${maxAttempts}), retrying in ${delay}ms...`, err.message);
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
 }
 
 /**
