@@ -1,0 +1,137 @@
+# ============================================================
+#  Physiobook Docker Compose — LOCAL DEVELOPMENT ONLY
+#  For production, use AWS RDS + ElastiCache + ECS/EC2
+#
+#  Usage:
+#    docker compose up -d
+#    docker compose logs -f api
+# ============================================================
+
+services:
+
+  # ── Node.js API ───────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: physiobook-api
+    restart: unless-stopped
+    ports:
+      - "4000:4000"
+    environment:
+      NODE_ENV: development
+      PORT: 4000
+      API_VERSION: v1
+
+      # PostgreSQL
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: physiobook
+      DB_USER: physiobook_user
+      DB_PASSWORD: physiobook_pass
+      DB_SSL: "false"
+
+      # Redis
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_TLS: "false"
+
+      # JWT — CHANGE THESE IN PRODUCTION
+      JWT_ACCESS_SECRET: dev_access_secret_change_in_production_min64chars
+      JWT_REFRESH_SECRET: dev_refresh_secret_change_in_production_min64chars
+
+      # PLACEHOLDER — add real values in .env for local testing
+      STRIPE_SECRET_KEY: sk_test_REPLACE_ME
+      STRIPE_WEBHOOK_SECRET: whsec_REPLACE_ME
+      SMTP_HOST: mailhog
+      SMTP_PORT: 1025
+      SMTP_SECURE: "false"
+      EMAIL_FROM_ADDRESS: no-reply@physiobook.local
+      EMAIL_PROVIDER: smtp
+
+      FRONTEND_URL: http://localhost:3000
+      CORS_ORIGINS: http://localhost:3000
+      LOG_LEVEL: debug
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./logs:/app/logs
+      - ./uploads:/app/uploads
+    networks:
+      - physiobook-net
+
+  # ── PostgreSQL ────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: physiobook-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: physiobook
+      POSTGRES_USER: physiobook_user
+      POSTGRES_PASSWORD: physiobook_pass
+    ports:
+      - "5434:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U physiobook_user -d physiobook"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - physiobook-net
+
+  # ── Redis ─────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: physiobook-redis
+    restart: unless-stopped
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - physiobook-net
+
+  # ── Mailhog — local email testing UI ─────────────────────
+  # Access at http://localhost:8025
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: physiobook-mailhog
+    restart: unless-stopped
+    ports:
+      - "1025:1025"   # SMTP
+      - "8025:8025"   # Web UI
+    networks:
+      - physiobook-net
+
+  # ── Nginx reverse proxy (optional) ───────────────────────
+  nginx:
+    image: nginx:alpine
+    container_name: physiobook-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - api
+    networks:
+      - physiobook-net
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  physiobook-net:
+    driver: bridge
