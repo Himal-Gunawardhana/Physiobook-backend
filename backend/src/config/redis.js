@@ -15,20 +15,37 @@ async function connectRedis() {
     maxRetriesPerRequest: 3,
     enableReadyCheck: true,
     lazyConnect:     true,
+    connectTimeout:  10000,
+    retryStrategy:   (times) => {
+      const delay = Math.min(times * 50, 2000);
+      return delay;
+    },
   };
 
   client = new Redis(opts);
 
-  client.on('error',   (err) => logger.error('Redis error:', err));
+  client.on('error',   (err) => logger.debug('Redis error:', err.message));
   client.on('connect', ()    => logger.debug('Redis connection established'));
 
-  await client.connect();
-  await client.ping();
+  try {
+    await client.connect();
+    await client.ping();
+    logger.info('✅  Redis connected');
+  } catch (err) {
+    logger.error('❌  Redis connection failed:', err.message);
+    logger.error('    Host:', config.redis.host);
+    logger.error('    Port:', config.redis.port);
+    throw err;
+  }
+  
   return client;
 }
 
 function getRedis() {
-  if (!client) throw new Error('Redis not initialised. Call connectRedis() first.');
+  if (!client) {
+    logger.warn('Redis not initialised. Returning null for graceful degradation.');
+    return null;
+  }
   return client;
 }
 

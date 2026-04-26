@@ -44,11 +44,16 @@ async function connectDB() {
     } catch (err) {
       attempts++;
       if (attempts >= maxAttempts) {
-        logger.error(`❌  Failed to connect to PostgreSQL after ${maxAttempts} attempts`, err.message);
-        throw err;
+        logger.error(`❌  Failed to connect to PostgreSQL after ${maxAttempts} attempts:`, err.message);
+        logger.error('    Code:', err.code);
+        logger.error('    Host:', config.db.host);
+        logger.error('    Port:', config.db.port);
+        // Throw the error to let the caller handle it gracefully
+        throw new Error(`Database connection failed: ${err.message}`);
       }
       const delay = initialDelay * Math.pow(2, attempts - 1);
-      logger.warn(`⚠️  PostgreSQL connection failed (attempt ${attempts}/${maxAttempts}), retrying in ${delay}ms...`, err.message);
+      logger.warn(`⚠️  PostgreSQL connection failed (attempt ${attempts}/${maxAttempts}), retrying in ${delay}ms...`);
+      logger.debug('Error details:', err.message);
       await new Promise(resolve => setTimeout(resolve, delay));
     }
   }
@@ -60,6 +65,9 @@ async function connectDB() {
  * @param {any[]}  params - Query parameters
  */
 async function query(text, params) {
+  if (!pool) {
+    throw new Error('Database not initialised. PostgreSQL connection failed.');
+  }
   const start = Date.now();
   const res = await pool.query(text, params);
   const duration = Date.now() - start;
@@ -72,6 +80,9 @@ async function query(text, params) {
  * Remember to release the client after use.
  */
 async function getClient() {
+  if (!pool) {
+    throw new Error('Database not initialised. PostgreSQL connection failed.');
+  }
   return pool.connect();
 }
 
