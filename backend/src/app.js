@@ -16,10 +16,34 @@ const app = express();
 app.use(helmet());
 
 // ── CORS ─────────────────────────────────────────────────────
-const allowedOrigins = (process.env.CORS_ORIGINS || '').split(',').map(o => o.trim());
+// Build list of allowed origins from environment or use defaults for development
+const defaultOrigins = [
+  'http://localhost:5173',      // Vite dev server (main)
+  'http://localhost:3000',      // Alternative local dev
+  'http://localhost:5174',      // Vite alternative port
+  'http://127.0.0.1:5173',      // Localhost alternative
+];
+
+const envOrigins = (process.env.CORS_ORIGINS || '').split(',')
+  .map(o => o.trim())
+  .filter(o => o.length > 0);
+
+const allowedOrigins = envOrigins.length > 0 ? envOrigins : defaultOrigins;
+
+logger.info(`✅ CORS enabled for origins: ${allowedOrigins.join(', ')}`);
+
 app.use(cors({
   origin: (origin, cb) => {
-    if (!origin || allowedOrigins.includes(origin)) return cb(null, true);
+    // Allow requests with no origin (like mobile apps, curl, etc)
+    if (!origin) return cb(null, true);
+    
+    // Allow if origin is in whitelist
+    if (allowedOrigins.includes(origin)) {
+      return cb(null, true);
+    }
+    
+    // Reject if origin not in whitelist
+    logger.warn(`⚠️  CORS rejected origin: ${origin}`);
     cb(new Error(`CORS policy does not allow origin: ${origin}`));
   },
   credentials: true,
