@@ -1,98 +1,127 @@
-# Physiobook Backend API - Complete Documentation
+# 🏥 Physiobook Backend API Documentation
 
 **Version:** 1.0.0  
-**Last Updated:** April 27, 2026  
+**API Base URL:** `https://physiobook-api.onrender.com/api/v1` (Production) | `http://localhost:4000/api/v1` (Development)  
 **Status:** Production Ready  
-**Repository:** https://github.com/Himal-Gunawardhana/Physiobook-backend
+**Last Updated:** April 2026
 
 ---
 
 ## 📋 Table of Contents
 
-1. [Overview](#overview)
-2. [Quick Start](#quick-start)
-3. [API Configuration](#api-configuration)
-4. [Authentication](#authentication)
-5. [Response Format](#response-format)
-6. [API Endpoints](#api-endpoints)
-7. [Error Handling](#error-handling)
-8. [Security](#security)
-9. [Rate Limiting](#rate-limiting)
-10. [WebSocket (Real-time)](#websocket-real-time)
-11. [Testing](#testing)
+1. [Getting Started](#getting-started)
+2. [Authentication](#authentication)
+3. [API Overview](#api-overview)
+4. [Error Handling](#error-handling)
+5. [CORS Configuration](#cors-configuration)
+6. [Rate Limiting](#rate-limiting)
+7. [API Endpoints](#api-endpoints)
+   - [Authentication](#-auth-endpoints)
+   - [Users](#-user-endpoints)
+   - [Clinics](#-clinic-endpoints)
+   - [Staff](#-staff-endpoints)
+   - [Bookings](#-booking-endpoints)
+   - [Payments](#-payment-endpoints)
+   - [Communications](#-communication-endpoints)
+   - [Admin](#-admin-endpoints)
+8. [WebSocket (Real-time Chat)](#websocket-real-time-chat)
+9. [Database Schema Overview](#database-schema-overview)
+10. [Common Integration Flows](#common-integration-flows)
+11. [Environment Configuration](#environment-configuration)
 12. [Troubleshooting](#troubleshooting)
 
 ---
 
-## 🎯 Overview
+## Getting Started
 
-Physiobook Backend is a **Node.js/Express REST API** for a physiotherapy clinic booking platform. It provides comprehensive endpoints for:
+### Prerequisites
 
-- 👥 User management and authentication
-- 🏥 Clinic operations
-- 👨‍⚕️ Staff/therapist management
-- 📅 Booking and scheduling
-- 💳 Payment processing (Stripe)
-- 💬 Real-time chat and communications
-- 🛡️ Admin control panel
+- **Node.js:** ≥ 18.0.0
+- **Frontend Framework:** React, Vue, Angular, or any framework with HTTP client
+- **HTTP Client:** fetch API, axios, or equivalent
 
-### **Tech Stack**
-- **Runtime:** Node.js 18+
-- **Framework:** Express.js 4.19
-- **Database:** PostgreSQL 16 (Supabase)
-- **Cache:** Redis (Upstash)
-- **Authentication:** JWT (RS256)
-- **Payments:** Stripe
-- **Real-time:** WebSocket (Socket.io)
-- **Deployment:** Render
+### Installation & Setup
 
-### **API Base URL**
+```bash
+# 1. Clone the repository
+git clone https://github.com/Himal-Gunawardhana/Physiobook-backend.git
+
+# 2. Install dependencies (in backend directory)
+cd backend
+npm install
+
+# 3. Set up environment variables
+cp .env.example .env
+# Edit .env with your database, Redis, Stripe, and email credentials
+
+# 4. Run database migrations
+node migrations/run.js
+
+# 5. Start the server (development)
+npm run dev
+
+# Server will be available at http://localhost:4000
 ```
-https://physiobook-api-jvye.onrender.com/api/v1
+
+### Quick Test
+
+```bash
+# Test the health endpoint (no auth required)
+curl http://localhost:4000/health
+# Response: { "status": "ok", "service": "physiobook-api", "version": "1.0.0" }
 ```
 
 ---
 
-## 🚀 Quick Start
+## Authentication
 
-### **1. Backend Health Check**
-```bash
-curl https://physiobook-api-jvye.onrender.com/health
+### Overview
+
+Physiobook uses **JWT (JSON Web Token)** authentication with:
+- **Access Token:** Short-lived token for API requests (15 minutes default)
+- **Refresh Token:** Long-lived token to obtain new access tokens (7 days default)
+- **2FA/TOTP:** Optional two-factor authentication for enhanced security
+- **Roles:** 5 role levels for permission management
+
+### Authentication Flow
+
+```
+┌──────────────┐
+│   Frontend   │
+└──────┬───────┘
+       │ POST /auth/login
+       ├─→ { email, password }
+       │
+┌──────▼───────────────┐
+│   Backend            │
+│ 1. Verify credentials│
+│ 2. Check 2FA status  │
+└──────┬───────────────┘
+       │
+       ├─ If 2FA enabled:
+       │  ├─→ { partialToken } (temp token)
+       │  ├─ User enters TOTP code
+       │  └─→ POST /auth/2fa/verify with code
+       │
+       └─ If 2FA disabled:
+          └─→ { accessToken, refreshToken, user }
 ```
 
-**Response:**
-```json
+### Token Management
+
+#### Login
+
+```http
+POST /api/v1/auth/login
+Content-Type: application/json
+
 {
-  "status": "ok",
-  "service": "physiobook-api",
-  "version": "1.0.0",
-  "timestamp": "2026-04-27T20:30:00.000Z"
+  "email": "user@example.com",
+  "password": "SecurePassword123"
 }
 ```
 
-### **2. Register a User**
-```bash
-curl -X POST https://physiobook-api-jvye.onrender.com/api/v1/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{
-    "firstName": "John",
-    "lastName": "Doe",
-    "email": "john@example.com",
-    "password": "SecurePass123"
-  }'
-```
-
-### **3. Login**
-```bash
-curl -X POST https://physiobook-api-jvye.onrender.com/api/v1/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{
-    "email": "john@example.com",
-    "password": "SecurePass123"
-  }'
-```
-
-**Response:**
+**Response (200 OK):**
 ```json
 {
   "success": true,
@@ -100,271 +129,283 @@ curl -X POST https://physiobook-api-jvye.onrender.com/api/v1/auth/login \
     "accessToken": "eyJhbGciOiJIUzI1NiIs...",
     "refreshToken": "eyJhbGciOiJIUzI1NiIs...",
     "user": {
-      "id": "uuid-here",
-      "email": "john@example.com",
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "email": "user@example.com",
       "firstName": "John",
       "lastName": "Doe",
       "role": "patient",
-      "isActive": true
+      "isActive": true,
+      "requiresTwoFa": false
     }
-  },
-  "message": "Login successful"
-}
-```
-
----
-
-## 🔧 API Configuration
-
-### **Environment Variables Required**
-
-```env
-# ── App Settings ──────────────────────────
-NODE_ENV=production
-PORT=4000
-API_VERSION=v1
-
-# ── CORS ─────────────────────────────────
-# Comma-separated list of allowed frontend URLs
-CORS_ORIGINS=http://localhost:5173,http://localhost:3000,https://your-frontend.com
-
-# ── Database (PostgreSQL via Supabase) ────
-DB_HOST=aws-1-ap-southeast-1.pooler.supabase.com
-DB_PORT=6543
-DB_NAME=postgres
-DB_USER=postgres.oxjhzyzyewbzwqqndfho
-DB_PASSWORD=your-password
-DB_SSL=true
-
-# ── Redis (Upstash) ──────────────────────
-REDIS_HOST=nice-bulldog-106944.upstash.io
-REDIS_PORT=6379
-REDIS_PASSWORD=your-password
-REDIS_TLS=true
-
-# ── JWT Authentication ──────────────────
-JWT_ACCESS_SECRET=your-long-random-string-min-64-chars
-JWT_REFRESH_SECRET=your-long-random-string-min-64-chars
-
-# ── Stripe Payments ────────────────────
-STRIPE_SECRET_KEY=sk_live_...
-STRIPE_WEBHOOK_SECRET=whsec_...
-STRIPE_CURRENCY=LKR
-
-# ── Email Configuration ──────────────
-EMAIL_PROVIDER=smtp
-SMTP_HOST=smtp.gmail.com
-SMTP_PORT=587
-SMTP_SECURE=false
-SMTP_USER=your-email@gmail.com
-SMTP_PASS=your-app-password
-EMAIL_FROM_ADDRESS=noreply@physiobook.com
-EMAIL_FROM_NAME=Physiobook
-```
-
-### **Frontend Configuration**
-
-Add this to your frontend `.env.local`:
-
-```env
-VITE_BACKEND_URL=https://physiobook-api-jvye.onrender.com
-VITE_API_VERSION=v1
-```
-
----
-
-## 🔐 Authentication
-
-### **JWT Token Flow**
-
-1. **Register/Login** → Get `accessToken` + `refreshToken`
-2. **Use accessToken** in all API requests (expires in 15 minutes)
-3. **When expired** → Call refresh endpoint to get new token
-4. **Refresh token** valid for 7 days (stored securely)
-
-### **Token Storage**
-
-```javascript
-// Store token in localStorage
-localStorage.setItem('physiobook_auth_token', accessToken);
-localStorage.setItem('physiobook_refresh_token', refreshToken);
-```
-
-### **Authorization Header**
-
-```bash
-Authorization: Bearer <accessToken>
-```
-
-### **Example: Get Current User**
-
-```bash
-curl -X GET https://physiobook-api-jvye.onrender.com/api/v1/users/me \
-  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIs..."
-```
-
-### **Refresh Token**
-
-```bash
-curl -X POST https://physiobook-api-jvye.onrender.com/api/v1/auth/refresh \
-  -H "Content-Type: application/json" \
-  -d '{ "refreshToken": "eyJhbGciOiJIUzI1NiIs..." }'
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "accessToken": "new-token-here"
   }
 }
 ```
 
+#### Refresh Token
+
+```http
+POST /api/v1/auth/refresh
+Content-Type: application/json
+
+{
+  "refreshToken": "eyJhbGciOiJIUzI1NiIs..."
+}
+```
+
+**Response (200 OK):**
+```json
+{
+  "success": true,
+  "data": {
+    "accessToken": "eyJhbGciOiJIUzI1NiIs...",
+    "refreshToken": "eyJhbGciOiJIUzI1NiIs..."
+  }
+}
+```
+
+#### 2FA Setup & Verification
+
+```http
+POST /api/v1/auth/2fa/setup
+Authorization: Bearer <accessToken>
+```
+
+**Response:** Returns TOTP secret and QR code URL for authenticator app.
+
+```http
+POST /api/v1/auth/2fa/confirm
+Authorization: Bearer <accessToken>
+Content-Type: application/json
+
+{
+  "code": "123456"
+}
+```
+
+### Headers for Authenticated Requests
+
+All protected endpoints require these headers:
+
+```http
+Authorization: Bearer <accessToken>
+X-Refresh-Token: <refreshToken>  (optional, for token rotation)
+```
+
+### Role-Based Access Control (RBAC)
+
+| Role | Level | Permissions |
+|------|-------|-------------|
+| **super_admin** | 0 | All operations, manage platforms, all clinics |
+| **clinic_admin** | 1 | Manage own clinic, staff, bookings, payments |
+| **therapist** | 2 | View own bookings, set schedule, write clinical notes |
+| **receptionist** | 3 | View clinic bookings, manage clinic operations, create bookings |
+| **patient** | 4 | Browse clinics, make bookings, pay, chat with therapist |
+
 ---
 
-## 📦 Response Format
+## API Overview
 
-### **Success Response** (Status: 200, 201)
+### Base Information
 
+- **API Version:** v1
+- **Protocol:** HTTP/HTTPS
+- **Data Format:** JSON
+- **Charset:** UTF-8
+- **Port:** 4000 (development) | Standard HTTP ports (production)
+
+### Response Format
+
+All responses follow a standardized format:
+
+**Success (2xx):**
 ```json
 {
   "success": true,
   "data": {
-    /* actual response data */
-  },
-  "message": "Operation successful"
+    // Response payload
+  }
 }
 ```
 
-**Example:**
-```json
-{
-  "success": true,
-  "data": {
-    "id": "clinic-uuid",
-    "name": "Main Clinic",
-    "address": "123 Main St",
-    "city": "New York",
-    "phone": "+1234567890"
-  },
-  "message": "Clinic retrieved successfully"
-}
-```
-
-### **List Response** (Status: 200)
-
-```json
-{
-  "success": true,
-  "data": [
-    { /* item 1 */ },
-    { /* item 2 */ }
-  ],
-  "total": 2,
-  "page": 1,
-  "limit": 10
-}
-```
-
-### **Error Response** (Status: 400-500)
-
+**Error (4xx, 5xx):**
 ```json
 {
   "success": false,
   "error": "ERROR_CODE",
-  "message": "User-friendly error message"
+  "message": "User-friendly error description",
+  "details": {}  // Optional: additional error info
 }
 ```
 
-**Examples:**
+---
+
+## Error Handling
+
+### HTTP Status Codes
+
+| Code | Meaning | Example |
+|------|---------|---------|
+| 200 | OK | Request succeeded |
+| 201 | Created | Resource created successfully |
+| 400 | Bad Request | Missing or invalid parameters |
+| 401 | Unauthorized | Invalid or expired token |
+| 402 | Payment Required | Stripe payment failed |
+| 403 | Forbidden | Not authorized for this action |
+| 404 | Not Found | Resource doesn't exist |
+| 409 | Conflict | Duplicate resource (email exists) |
+| 413 | Payload Too Large | File upload exceeds 5MB |
+| 422 | Unprocessable Entity | Validation error |
+| 500 | Internal Server Error | Server error |
+
+### Standard Error Codes
+
+| Error Code | HTTP | Meaning | Solution |
+|-----------|------|---------|----------|
+| `VALIDATION_ERROR` | 422 | Request validation failed | Check input format |
+| `AUTH_ERROR` | 401 | Invalid/expired token | Re-login to get new token |
+| `DUPLICATE_RESOURCE` | 409 | Email/resource already exists | Use different value |
+| `INVALID_REFERENCE` | 400 | Referenced resource missing | Ensure ID exists |
+| `NOT_FOUND` | 404 | Endpoint/resource not found | Check URL spelling |
+| `PAYMENT_ERROR` | 402 | Stripe operation failed | Check payment details |
+| `CORS_ERROR` | 403 | Origin not allowed | Check CORS_ORIGINS env var |
+| `FILE_TOO_LARGE` | 413 | Upload > 5MB | Reduce file size |
+| `INTERNAL_ERROR` | 500 | Unexpected server error | Contact support |
+
+### Example Error Response
 
 ```json
-// Validation Error (400)
 {
   "success": false,
   "error": "VALIDATION_ERROR",
   "message": "Request validation failed",
   "details": [
-    { "field": "email", "message": "Invalid email format" }
+    {
+      "field": "email",
+      "message": "Valid email required"
+    },
+    {
+      "field": "password",
+      "message": "Password must contain uppercase, lowercase, and a number"
+    }
   ]
-}
-```
-
-```json
-// Duplicate Resource (409)
-{
-  "success": false,
-  "error": "DUPLICATE_RESOURCE",
-  "message": "Email already registered"
-}
-```
-
-```json
-// Not Found (404)
-{
-  "success": false,
-  "error": "NOT_FOUND",
-  "message": "Clinic not found"
-}
-```
-
-```json
-// Unauthorized (401)
-{
-  "success": false,
-  "error": "AUTH_ERROR",
-  "message": "Invalid or expired authentication token. Please login again."
 }
 ```
 
 ---
 
-## 📡 API Endpoints
+## CORS Configuration
 
-### **🔑 Authentication Endpoints** (`/auth`)
+### Allowed Origins
 
-#### **POST /auth/register**
-Register a new user.
+The backend accepts requests from configured origins. Default origins (development):
 
-**Request:**
+- `http://localhost:5173` (Vite dev server)
+- `http://localhost:3000` (React dev server)
+- `http://localhost:5174` (Alternative Vite port)
+- `http://127.0.0.1:5173` (Localhost variant)
+
+### Production Configuration
+
+In production, set `CORS_ORIGINS` environment variable:
+
+```bash
+CORS_ORIGINS=https://app.physiobook.com,https://www.physiobook.com,https://admin.physiobook.com
+```
+
+### Allowed Methods
+
+```
+GET, POST, PUT, PATCH, DELETE, OPTIONS
+```
+
+### Allowed Headers
+
+```
+Content-Type, Authorization, X-Refresh-Token
+```
+
+### Important Notes
+
+- **Mobile/Native Apps:** Apps with no origin are automatically allowed (safe due to authentication)
+- **Preflight Caching:** 24 hours (86400 seconds)
+- **Credentials:** Cookies and Authorization headers supported
+
+---
+
+## Rate Limiting
+
+### Default Limits
+
+| Endpoint | Limit | Window |
+|----------|-------|--------|
+| General API | 100 requests | 15 minutes |
+| Auth endpoints | 10 requests | 15 minutes |
+| OTP/2FA | 5 requests | 15 minutes |
+
+### Rate Limit Headers
+
+```http
+X-RateLimit-Limit: 100
+X-RateLimit-Remaining: 45
+X-RateLimit-Reset: 1234567890
+```
+
+### Example Rate Limit Response
+
 ```json
+{
+  "success": false,
+  "error": "RATE_LIMIT_EXCEEDED",
+  "message": "Too many requests, please retry after 15 minutes"
+}
+```
+
+---
+
+## 🔐 AUTH Endpoints
+
+### 1. Register User
+
+```http
+POST /api/v1/auth/register
+Content-Type: application/json
+
 {
   "firstName": "John",
   "lastName": "Doe",
   "email": "john@example.com",
   "phone": "+1234567890",
-  "password": "SecurePass123"
+  "password": "SecurePassword123"
 }
 ```
 
-**Requirements:**
-- Email must be valid and unique
-- Password must be 8+ chars, contain uppercase, lowercase, and number
-- First/Last name required
+**Validations:**
+- Email must be unique
+- Password minimum 8 chars, must include uppercase, lowercase, number
+- Phone must be valid (optional)
 
-**Response:** `201 Created`
+**Response (201 Created):**
 ```json
 {
   "success": true,
   "data": {
-    "id": "user-uuid",
+    "id": "550e8400-e29b-41d4-a716-446655440000",
     "email": "john@example.com",
     "firstName": "John",
     "lastName": "Doe",
     "role": "patient",
-    "accessToken": "...",
-    "refreshToken": "..."
+    "message": "Registration successful. Please verify your email."
   }
 }
 ```
 
----
+### 2. Verify Email
 
-#### **GET /auth/verify-email?token={token}**
-Verify user email address.
+```http
+GET /api/v1/auth/verify-email?token=eyJhbGciOiJIUzI1NiIs...
+```
 
-**Response:** `200 OK`
+**Response (200 OK):**
 ```json
 {
   "success": true,
@@ -372,100 +413,140 @@ Verify user email address.
 }
 ```
 
----
+### 3. Login
 
-#### **POST /auth/login**
-Authenticate user and get tokens.
+See [Token Management](#token-management) section above.
 
-**Request:**
-```json
-{
-  "email": "john@example.com",
-  "password": "SecurePass123"
-}
+### 4. 2FA Setup
+
+```http
+POST /api/v1/auth/2fa/setup
+Authorization: Bearer <accessToken>
 ```
 
-**Response:** `200 OK`
+**Response (200 OK):**
 ```json
 {
   "success": true,
   "data": {
-    "accessToken": "...",
-    "refreshToken": "...",
+    "secret": "JBSWY3DPEBLW64TMMQQQ====",
+    "qrCodeUrl": "otpauth://totp/Physiobook:user@example.com?...",
+    "message": "Scan QR code with authenticator app (Google Authenticator, Authy, etc.)"
+  }
+}
+```
+
+### 5. Verify 2FA Code (Login)
+
+```http
+POST /api/v1/auth/2fa/verify
+Content-Type: application/json
+
+{
+  "partialToken": "eyJhbGciOiJIUzI1NiIs...",
+  "code": "123456"
+}
+```
+
+**Response (200 OK):**
+```json
+{
+  "success": true,
+  "data": {
+    "accessToken": "eyJhbGciOiJIUzI1NiIs...",
+    "refreshToken": "eyJhbGciOiJIUzI1NiIs...",
     "user": { /* user object */ }
   }
 }
 ```
 
----
+### 6. Confirm 2FA Setup
 
-#### **POST /auth/refresh**
-Refresh expired access token.
+```http
+POST /api/v1/auth/2fa/confirm
+Authorization: Bearer <accessToken>
+Content-Type: application/json
 
-**Request:**
-```json
 {
-  "refreshToken": "..."
+  "code": "123456"
 }
 ```
 
-**Response:** `200 OK`
-```json
-{
-  "success": true,
-  "data": {
-    "accessToken": "new-token-here"
-  }
-}
-```
-
----
-
-#### **POST /auth/logout** ⭐ (Protected)
-Logout and invalidate tokens.
-
-**Response:** `200 OK`
+**Response (200 OK):**
 ```json
 {
   "success": true,
-  "message": "Logged out successfully"
+  "message": "Two-factor authentication enabled"
 }
 ```
 
----
+### 7. Disable 2FA
 
-#### **POST /auth/forgot-password**
-Request password reset.
+```http
+DELETE /api/v1/auth/2fa
+Authorization: Bearer <accessToken>
+Content-Type: application/json
 
-**Request:**
-```json
 {
-  "email": "john@example.com"
+  "code": "123456"
 }
 ```
 
-**Response:** `200 OK`
+**Response (200 OK):**
 ```json
 {
   "success": true,
-  "message": "Password reset link sent to email"
+  "message": "Two-factor authentication disabled"
 }
 ```
 
----
+### 8. Logout
 
-#### **POST /auth/reset-password**
-Reset password with token.
+```http
+POST /api/v1/auth/logout
+Authorization: Bearer <accessToken>
+```
 
-**Request:**
+**Response (200 OK):**
 ```json
 {
-  "token": "reset-token-from-email",
-  "newPassword": "NewSecurePass456"
+  "success": true,
+  "message": "Logout successful"
 }
 ```
 
-**Response:** `200 OK`
+### 9. Forgot Password
+
+```http
+POST /api/v1/auth/forgot-password
+Content-Type: application/json
+
+{
+  "email": "user@example.com"
+}
+```
+
+**Response (200 OK):**
+```json
+{
+  "success": true,
+  "message": "Password reset email sent. Check your inbox."
+}
+```
+
+### 10. Reset Password
+
+```http
+POST /api/v1/auth/reset-password
+Content-Type: application/json
+
+{
+  "token": "eyJhbGciOiJIUzI1NiIs...",
+  "newPassword": "NewSecurePassword123"
+}
+```
+
+**Response (200 OK):**
 ```json
 {
   "success": true,
@@ -473,130 +554,61 @@ Reset password with token.
 }
 ```
 
+### 11. Refresh Token
+
+See [Token Management](#token-management) section above.
+
 ---
 
-#### **POST /auth/2fa/setup** ⭐ (Protected)
-Setup two-factor authentication.
+## 👤 USER Endpoints
 
-**Response:** `200 OK`
+All user endpoints require authentication.
+
+### 1. Get Current User Profile
+
+```http
+GET /api/v1/users/me
+Authorization: Bearer <accessToken>
+```
+
+**Response (200 OK):**
 ```json
 {
   "success": true,
   "data": {
-    "secret": "JBSWY3DPEBLW64TMMQ======",
-    "qrCode": "data:image/png;base64,..."
-  },
-  "message": "Scan QR code with authenticator app"
-}
-```
-
----
-
-#### **POST /auth/2fa/confirm** ⭐ (Protected)
-Confirm 2FA setup with code.
-
-**Request:**
-```json
-{
-  "code": "123456"
-}
-```
-
-**Response:** `200 OK`
-```json
-{
-  "success": true,
-  "message": "2FA enabled successfully"
-}
-```
-
----
-
-#### **POST /auth/2fa/verify**
-Verify 2FA code during login.
-
-**Request:**
-```json
-{
-  "partialToken": "partial-token-from-login",
-  "code": "123456"
-}
-```
-
-**Response:** `200 OK`
-```json
-{
-  "success": true,
-  "data": {
-    "accessToken": "...",
-    "refreshToken": "..."
-  }
-}
-```
-
----
-
-#### **DELETE /auth/2fa** ⭐ (Protected)
-Disable two-factor authentication.
-
-**Request:**
-```json
-{
-  "code": "123456"
-}
-```
-
-**Response:** `200 OK`
-```json
-{
-  "success": true,
-  "message": "2FA disabled"
-}
-```
-
----
-
-### **👤 User Endpoints** (`/users`)
-
-#### **GET /users/me** ⭐ (Protected)
-Get current user profile.
-
-**Response:** `200 OK`
-```json
-{
-  "success": true,
-  "data": {
-    "id": "user-uuid",
+    "id": "550e8400-e29b-41d4-a716-446655440000",
     "email": "john@example.com",
     "firstName": "John",
     "lastName": "Doe",
     "phone": "+1234567890",
+    "avatar": "https://s3.amazonaws.com/physiobook/avatars/...",
+    "dateOfBirth": "1990-01-01",
+    "gender": "male",
     "role": "patient",
-    "avatarUrl": "https://...",
     "isActive": true,
-    "createdAt": "2026-04-27T...",
-    "updatedAt": "2026-04-27T..."
+    "createdAt": "2026-04-01T10:30:00Z",
+    "updatedAt": "2026-04-27T15:45:00Z"
   }
 }
 ```
 
----
+### 2. Update Profile
 
-#### **PUT /users/me** ⭐ (Protected)
-Update current user profile.
+```http
+PUT /api/v1/users/me
+Authorization: Bearer <accessToken>
+Content-Type: application/json
 
-**Request:**
-```json
 {
-  "firstName": "Jane",
-  "lastName": "Smith",
-  "phone": "+9876543210",
-  "dateOfBirth": "1990-01-15",
-  "gender": "female"
+  "firstName": "John",
+  "lastName": "Doe",
+  "phone": "+1234567890",
+  "dateOfBirth": "1990-01-01",
+  "gender": "male"
 }
 ```
 
-**Response:** `200 OK`
+**Response (200 OK):**
 ```json
 {
   "success": true,
@@ -604,40 +616,41 @@ Update current user profile.
 }
 ```
 
----
+### 3. Upload Avatar
 
-#### **POST /users/me/avatar** ⭐ (Protected)
-Upload user avatar image.
+```http
+POST /api/v1/users/me/avatar
+Authorization: Bearer <accessToken>
+Content-Type: multipart/form-data
 
-**Request:** Multipart form data
+[File: avatar.jpg (max 5MB)]
 ```
-avatar: <file> (max 5MB, image only)
-```
 
-**Response:** `200 OK`
+**Response (200 OK):**
 ```json
 {
   "success": true,
   "data": {
-    "avatarUrl": "https://..."
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "avatar": "https://s3.amazonaws.com/physiobook/avatars/550e8400-e29b-41d4-a716-446655440000-avatar.jpg"
   }
 }
 ```
 
----
+### 4. Change Password
 
-#### **PUT /users/me/password** ⭐ (Protected)
-Change user password.
+```http
+PUT /api/v1/users/me/password
+Authorization: Bearer <accessToken>
+Content-Type: application/json
 
-**Request:**
-```json
 {
-  "currentPassword": "OldPass123",
-  "newPassword": "NewPass456"
+  "currentPassword": "OldPassword123",
+  "newPassword": "NewPassword123"
 }
 ```
 
-**Response:** `200 OK`
+**Response (200 OK):**
 ```json
 {
   "success": true,
@@ -645,32 +658,36 @@ Change user password.
 }
 ```
 
----
+### 5. List Users (Admin/Clinic Admin/Receptionist)
 
-#### **GET /users** ⭐ (Protected - Admin only)
-List all users (pagination supported).
+```http
+GET /api/v1/users?page=1&limit=20
+Authorization: Bearer <accessToken>
+```
 
-**Query Parameters:**
-- `page` - Page number (default: 1)
-- `limit` - Items per page (default: 10)
-
-**Response:** `200 OK`
+**Response (200 OK):**
 ```json
 {
   "success": true,
-  "data": [ /* array of users */ ],
-  "total": 100,
-  "page": 1,
-  "limit": 10
+  "data": {
+    "users": [ /* array of users */ ],
+    "pagination": {
+      "page": 1,
+      "limit": 20,
+      "total": 150
+    }
+  }
 }
 ```
 
----
+### 6. Get User by ID
 
-#### **GET /users/:id** ⭐ (Protected)
-Get specific user by ID.
+```http
+GET /api/v1/users/:id
+Authorization: Bearer <accessToken>
+```
 
-**Response:** `200 OK`
+**Response (200 OK):**
 ```json
 {
   "success": true,
@@ -678,19 +695,19 @@ Get specific user by ID.
 }
 ```
 
----
+### 7. Set User Active/Inactive (Admin)
 
-#### **PATCH /users/:id/status** ⭐ (Protected - Admin only)
-Activate or deactivate user.
+```http
+PATCH /api/v1/users/:id/status
+Authorization: Bearer <accessToken>
+Content-Type: application/json
 
-**Request:**
-```json
 {
   "isActive": false
 }
 ```
 
-**Response:** `200 OK`
+**Response (200 OK):**
 ```json
 {
   "success": true,
@@ -698,114 +715,96 @@ Activate or deactivate user.
 }
 ```
 
----
+### 8. Delete User (Admin, Soft Delete)
 
-#### **DELETE /users/:id** ⭐ (Protected - Admin only)
-Delete user (soft delete).
+```http
+DELETE /api/v1/users/:id
+Authorization: Bearer <accessToken>
+```
 
-**Response:** `200 OK`
+**Response (200 OK):**
 ```json
 {
   "success": true,
-  "message": "User deleted"
+  "message": "User deleted successfully"
 }
 ```
 
 ---
 
-### **🏥 Clinic Endpoints** (`/clinics`)
+## 🏢 CLINIC Endpoints
 
-#### **GET /clinics** ⭐ (Protected)
-List all clinics (public browsing).
+### 1. List Clinics
 
-**Query Parameters:**
-- `page` - Page number
-- `limit` - Items per page
-- `search` - Search by name
-- `city` - Filter by city
-
-**Response:** `200 OK`
-```json
-{
-  "success": true,
-  "data": [
-    {
-      "id": "clinic-uuid",
-      "name": "Main Clinic",
-      "address": "123 Main St",
-      "city": "New York",
-      "country": "USA",
-      "phone": "+1234567890",
-      "email": "info@clinic.com",
-      "isActive": true,
-      "services": [ /* array of services */ ]
-    }
-  ],
-  "total": 5,
-  "page": 1,
-  "limit": 10
-}
+```http
+GET /api/v1/clinics
+Authorization: Bearer <accessToken>
 ```
 
----
-
-#### **GET /clinics/:clinicId** ⭐ (Protected)
-Get clinic details.
-
-**Response:** `200 OK`
+**Response (200 OK):**
 ```json
 {
   "success": true,
   "data": {
-    "id": "clinic-uuid",
-    "name": "Main Clinic",
-    "address": "123 Main St",
-    "city": "New York",
-    "country": "USA",
-    "phone": "+1234567890",
-    "email": "info@clinic.com",
-    "operatingHours": [
-      { "day": "Monday", "open": "09:00", "close": "17:00" }
-    ],
-    "services": [
+    "clinics": [
       {
-        "id": "service-uuid",
-        "name": "Physical Therapy",
-        "durationMinutes": 60,
-        "price": 100
-      }
-    ],
-    "staff": [
-      {
-        "id": "staff-uuid",
-        "firstName": "Dr. Jane",
-        "lastName": "Smith",
-        "role": "therapist",
-        "specializations": ["Back pain", "Injury recovery"]
+        "id": "550e8400-e29b-41d4-a716-446655440000",
+        "name": "Central Physio Clinic",
+        "addressLine1": "123 Main Street",
+        "city": "New York",
+        "state": "NY",
+        "postalCode": "10001",
+        "country": "USA",
+        "phone": "+12125551234",
+        "email": "info@centralphysio.com",
+        "isActive": true,
+        "createdAt": "2026-01-15T08:00:00Z"
       }
     ]
   }
 }
 ```
 
----
+### 2. Create Clinic (Super Admin)
 
-#### **POST /clinics** ⭐ (Protected - Super Admin only)
-Create new clinic.
+```http
+POST /api/v1/clinics
+Authorization: Bearer <accessToken>
+Content-Type: application/json
 
-**Request:**
-```json
 {
-  "name": "New Clinic",
-  "addressLine1": "123 Main St",
-  "city": "New York",
+  "name": "New Physio Clinic",
+  "addressLine1": "456 Oak Avenue",
+  "addressLine2": "Suite 200",
+  "city": "Boston",
+  "state": "MA",
+  "postalCode": "02101",
   "country": "USA",
-  "phone": "+1234567890",
-  "email": "info@clinic.com"
+  "phone": "+16175551234",
+  "email": "contact@newphysio.com"
 }
 ```
 
-**Response:** `201 Created`
+**Response (201 Created):**
+```json
+{
+  "success": true,
+  "data": {
+    "id": "550e8400-e29b-41d4-a716-446655440001",
+    "name": "New Physio Clinic",
+    /* ... clinic details ... */
+  }
+}
+```
+
+### 3. Get Clinic Details
+
+```http
+GET /api/v1/clinics/:clinicId
+Authorization: Bearer <accessToken>
+```
+
+**Response (200 OK):**
 ```json
 {
   "success": true,
@@ -813,20 +812,21 @@ Create new clinic.
 }
 ```
 
----
+### 4. Update Clinic
 
-#### **PUT /clinics/:clinicId** ⭐ (Protected - Clinic Admin+)
-Update clinic details.
+```http
+PUT /api/v1/clinics/:clinicId
+Authorization: Bearer <accessToken>
+Content-Type: application/json
 
-**Request:**
-```json
 {
-  "name": "Updated Name",
-  "phone": "+9876543210"
+  "name": "Updated Clinic Name",
+  "phone": "+16175559999",
+  "email": "newemail@clinic.com"
 }
 ```
 
-**Response:** `200 OK`
+**Response (200 OK):**
 ```json
 {
   "success": true,
@@ -834,110 +834,136 @@ Update clinic details.
 }
 ```
 
----
+### 5. Get Operating Hours
 
-#### **GET /clinics/:clinicId/hours** ⭐ (Protected)
-Get clinic operating hours.
+```http
+GET /api/v1/clinics/:clinicId/hours
+Authorization: Bearer <accessToken>
+```
 
-**Response:** `200 OK`
+**Response (200 OK):**
 ```json
 {
   "success": true,
-  "data": [
-    {
-      "day": "Monday",
-      "open": "09:00",
-      "close": "17:00",
-      "isClosed": false
-    },
-    {
-      "day": "Sunday",
-      "isClosed": true
-    }
-  ]
+  "data": {
+    "hours": [
+      {
+        "dayOfWeek": 0,
+        "dayName": "Sunday",
+        "isOpen": false,
+        "openTime": null,
+        "closeTime": null
+      },
+      {
+        "dayOfWeek": 1,
+        "dayName": "Monday",
+        "isOpen": true,
+        "openTime": "09:00",
+        "closeTime": "18:00"
+      },
+      /* ... other days ... */
+    ]
+  }
 }
 ```
 
----
+### 6. Set Operating Hours
 
-#### **PUT /clinics/:clinicId/hours** ⭐ (Protected - Clinic Admin+)
-Set clinic operating hours.
+```http
+PUT /api/v1/clinics/:clinicId/hours
+Authorization: Bearer <accessToken>
+Content-Type: application/json
 
-**Request:**
-```json
 {
   "hours": [
-    { "day": "Monday", "open": "08:00", "close": "18:00" },
-    { "day": "Saturday", "isClosed": true }
+    { "dayOfWeek": 1, "isOpen": true, "openTime": "09:00", "closeTime": "18:00" },
+    { "dayOfWeek": 2, "isOpen": true, "openTime": "09:00", "closeTime": "18:00" },
+    { "dayOfWeek": 3, "isOpen": true, "openTime": "09:00", "closeTime": "18:00" },
+    { "dayOfWeek": 4, "isOpen": true, "openTime": "09:00", "closeTime": "18:00" },
+    { "dayOfWeek": 5, "isOpen": true, "openTime": "09:00", "closeTime": "18:00" },
+    { "dayOfWeek": 6, "isOpen": false, "openTime": null, "closeTime": null },
+    { "dayOfWeek": 0, "isOpen": false, "openTime": null, "closeTime": null }
   ]
 }
 ```
 
-**Response:** `200 OK`
+**Response (200 OK):**
 ```json
 {
   "success": true,
-  "message": "Operating hours updated"
+  "data": { /* updated hours */ }
 }
 ```
 
----
+### 7. Get Services (Treatment Catalogue)
 
-#### **GET /clinics/:clinicId/services** ⭐ (Protected)
-Get clinic services.
+```http
+GET /api/v1/clinics/:clinicId/services
+Authorization: Bearer <accessToken>
+```
 
-**Response:** `200 OK`
+**Response (200 OK):**
 ```json
 {
   "success": true,
-  "data": [
-    {
-      "id": "service-uuid",
-      "name": "Physical Therapy",
-      "description": "General PT",
-      "durationMinutes": 60,
-      "price": 100
-    }
-  ]
+  "data": {
+    "services": [
+      {
+        "id": "550e8400-e29b-41d4-a716-446655440002",
+        "clinicId": "550e8400-e29b-41d4-a716-446655440000",
+        "name": "Physical Therapy - Initial Consultation",
+        "description": "Comprehensive initial assessment",
+        "durationMinutes": 60,
+        "price": 150.00,
+        "currency": "LKR",
+        "isActive": true
+      }
+    ]
+  }
 }
 ```
 
----
+### 8. Add Service
 
-#### **POST /clinics/:clinicId/services** ⭐ (Protected - Clinic Admin+)
-Add new service.
+```http
+POST /api/v1/clinics/:clinicId/services
+Authorization: Bearer <accessToken>
+Content-Type: application/json
 
-**Request:**
-```json
 {
-  "name": "Sports Injury Recovery",
-  "description": "Specialized recovery for athletes",
-  "durationMinutes": 90,
-  "price": 150
+  "name": "Physical Therapy Session",
+  "description": "Standard 45-minute therapy session",
+  "durationMinutes": 45,
+  "price": 100.00,
+  "currency": "LKR"
 }
 ```
 
-**Response:** `201 Created`
+**Response (201 Created):**
 ```json
 {
   "success": true,
-  "data": { /* service object */ }
+  "data": {
+    "id": "550e8400-e29b-41d4-a716-446655440003",
+    /* ... service details ... */
+  }
 }
 ```
 
----
+### 9. Update Service
 
-#### **PUT /clinics/:clinicId/services/:serviceId** ⭐ (Protected - Clinic Admin+)
-Update service.
+```http
+PUT /api/v1/clinics/:clinicId/services/:serviceId
+Authorization: Bearer <accessToken>
+Content-Type: application/json
 
-**Request:**
-```json
 {
-  "price": 120
+  "price": 120.00,
+  "durationMinutes": 50
 }
 ```
 
-**Response:** `200 OK`
+**Response (200 OK):**
 ```json
 {
   "success": true,
@@ -947,129 +973,155 @@ Update service.
 
 ---
 
-### **👨‍⚕️ Staff Endpoints** (`/staff`)
+## 👨‍⚕️ STAFF Endpoints
 
-#### **GET /staff** ⭐ (Protected - Clinic staff+)
-List clinic staff.
+### 1. List Staff
 
-**Response:** `200 OK`
-```json
-{
-  "success": true,
-  "data": [
-    {
-      "id": "staff-uuid",
-      "firstName": "Jane",
-      "lastName": "Smith",
-      "email": "jane@clinic.com",
-      "role": "therapist",
-      "specializations": ["Back pain", "Sports injury"],
-      "licenseNumber": "PT123456",
-      "isActive": true
-    }
-  ]
-}
+```http
+GET /api/v1/staff
+Authorization: Bearer <accessToken>
 ```
 
----
-
-#### **POST /staff** ⭐ (Protected - Clinic Admin+)
-Create staff member.
-
-**Request:**
-```json
-{
-  "firstName": "Jane",
-  "lastName": "Smith",
-  "email": "jane@clinic.com",
-  "role": "therapist"
-}
-```
-
-**Response:** `201 Created`
-```json
-{
-  "success": true,
-  "data": { /* staff object */ }
-}
-```
-
----
-
-#### **GET /staff/therapists/:therapistId** ⭐ (Protected)
-Get therapist profile.
-
-**Response:** `200 OK`
+**Response (200 OK):**
 ```json
 {
   "success": true,
   "data": {
-    "id": "therapist-uuid",
-    "firstName": "Jane",
-    "lastName": "Smith",
-    "specializations": ["Back pain", "Sports injury"],
-    "bio": "10+ years of experience",
-    "rating": 4.8,
-    "totalReviews": 45
-  }
-}
-```
-
----
-
-#### **GET /staff/therapists/:therapistId/availability** ⭐ (Protected)
-Get therapist availability for specific date.
-
-**Query Parameters:**
-- `date` - Date in YYYY-MM-DD format (required)
-
-**Response:** `200 OK`
-```json
-{
-  "success": true,
-  "data": {
-    "therapistId": "therapist-uuid",
-    "date": "2026-05-10",
-    "slots": [
-      { "startTime": "09:00", "endTime": "10:00", "isAvailable": true },
-      { "startTime": "10:00", "endTime": "11:00", "isAvailable": false },
-      { "startTime": "14:00", "endTime": "15:00", "isAvailable": true }
+    "staff": [
+      {
+        "id": "550e8400-e29b-41d4-a716-446655440004",
+        "firstName": "Sarah",
+        "lastName": "Smith",
+        "email": "sarah@clinic.com",
+        "role": "therapist",
+        "clinicId": "550e8400-e29b-41d4-a716-446655440000",
+        "specialization": "Sports Injury",
+        "isActive": true
+      }
     ]
   }
 }
 ```
 
----
+### 2. Create Staff Member
 
-#### **PUT /staff/therapists/:therapistId/schedule** ⭐ (Protected - Therapist+)
-Set therapist weekly schedule.
+```http
+POST /api/v1/staff
+Authorization: Bearer <accessToken>
+Content-Type: application/json
 
-**Request:**
+{
+  "firstName": "Mike",
+  "lastName": "Johnson",
+  "email": "mike@clinic.com",
+  "phone": "+12025551234",
+  "role": "therapist",
+  "specialization": "Back Pain Treatment"
+}
+```
+
+**Response (201 Created):**
 ```json
 {
+  "success": true,
+  "data": {
+    "id": "550e8400-e29b-41d4-a716-446655440005",
+    /* ... staff details ... */
+  }
+}
+```
+
+### 3. Get Therapist Profile
+
+```http
+GET /api/v1/staff/therapists/:therapistId
+Authorization: Bearer <accessToken>
+```
+
+**Response (200 OK):**
+```json
+{
+  "success": true,
+  "data": {
+    "id": "550e8400-e29b-41d4-a716-446655440004",
+    "firstName": "Sarah",
+    "lastName": "Smith",
+    "email": "sarah@clinic.com",
+    "specialization": "Sports Injury",
+    "bio": "Experienced physical therapist...",
+    "clinicId": "550e8400-e29b-41d4-a716-446655440000",
+    "rating": 4.8,
+    "reviewCount": 45,
+    "hourlyRate": 100.00
+  }
+}
+```
+
+### 4. Get Therapist Availability
+
+```http
+GET /api/v1/staff/therapists/:therapistId/availability?date=2026-05-15
+Authorization: Bearer <accessToken>
+```
+
+**Response (200 OK):**
+```json
+{
+  "success": true,
+  "data": {
+    "date": "2026-05-15",
+    "therapistId": "550e8400-e29b-41d4-a716-446655440004",
+    "availableSlots": [
+      { "startTime": "09:00", "endTime": "09:45" },
+      { "startTime": "10:00", "endTime": "10:45" },
+      { "startTime": "11:00", "endTime": "11:45" },
+      /* ... more slots ... */
+    ]
+  }
+}
+```
+
+### 5. Set Weekly Schedule
+
+```http
+PUT /api/v1/staff/therapists/:therapistId/schedule
+Authorization: Bearer <accessToken>
+Content-Type: application/json
+
+{
   "schedule": [
-    { "dayOfWeek": 1, "startTime": "09:00", "endTime": "17:00" },
-    { "dayOfWeek": 2, "startTime": "09:00", "endTime": "17:00" },
-    { "dayOfWeek": 6, "isOff": true }
+    {
+      "dayOfWeek": 1,
+      "startTime": "09:00",
+      "endTime": "17:00",
+      "slotDuration": 45
+    },
+    {
+      "dayOfWeek": 2,
+      "startTime": "09:00",
+      "endTime": "17:00",
+      "slotDuration": 45
+    },
+    /* ... other days ... */
   ]
 }
 ```
 
-**Response:** `200 OK`
+**Response (200 OK):**
 ```json
 {
   "success": true,
-  "message": "Schedule updated"
+  "message": "Schedule updated successfully"
 }
 ```
 
----
+### 6. Block Time Slot
 
-#### **POST /staff/therapists/:therapistId/block** ⭐ (Protected - Therapist+)
-Block time slot (vacation, lunch, etc).
+```http
+POST /api/v1/staff/therapists/:therapistId/block
+Authorization: Bearer <accessToken>
+Content-Type: application/json
 
-**Request:**
-```json
 {
   "date": "2026-05-15",
   "startTime": "12:00",
@@ -1078,303 +1130,297 @@ Block time slot (vacation, lunch, etc).
 }
 ```
 
-**Response:** `201 Created`
+**Response (201 Created):**
 ```json
 {
   "success": true,
-  "message": "Time slot blocked"
+  "message": "Time slot blocked successfully"
 }
 ```
 
----
+### 7. List Resources (Rooms/Equipment)
 
-#### **GET /staff/resources** ⭐ (Protected)
-List clinic resources (rooms, equipment).
-
-**Response:** `200 OK`
-```json
-{
-  "success": true,
-  "data": [
-    {
-      "id": "resource-uuid",
-      "name": "Treatment Room 1",
-      "type": "room",
-      "isAvailable": true
-    },
-    {
-      "id": "resource-uuid",
-      "name": "Ultrasound Machine",
-      "type": "equipment",
-      "isAvailable": true
-    }
-  ]
-}
+```http
+GET /api/v1/staff/resources
+Authorization: Bearer <accessToken>
 ```
 
----
-
-#### **POST /staff/resources** ⭐ (Protected - Clinic Admin+)
-Create resource.
-
-**Request:**
-```json
-{
-  "name": "Traction Table",
-  "type": "equipment"
-}
-```
-
-**Response:** `201 Created`
-```json
-{
-  "success": true,
-  "data": { /* resource object */ }
-}
-```
-
----
-
-### **📅 Booking Endpoints** (`/bookings`)
-
-#### **GET /bookings/slots** ⭐ (Protected)
-Get available appointment slots.
-
-**Query Parameters:**
-- `therapistId` - Therapist UUID (required)
-- `date` - Date YYYY-MM-DD (required)
-- `serviceDuration` - Duration in minutes (required)
-
-**Example:**
-```
-GET /api/v1/bookings/slots?therapistId=uuid&date=2026-05-10&serviceDuration=60
-```
-
-**Response:** `200 OK`
+**Response (200 OK):**
 ```json
 {
   "success": true,
   "data": {
-    "therapistId": "therapist-uuid",
-    "date": "2026-05-10",
-    "slots": [
-      { "startTime": "09:00", "endTime": "10:00" },
-      { "startTime": "10:30", "endTime": "11:30" },
-      { "startTime": "14:00", "endTime": "15:00" }
+    "resources": [
+      {
+        "id": "550e8400-e29b-41d4-a716-446655440006",
+        "name": "Treatment Room A",
+        "type": "room",
+        "clinicId": "550e8400-e29b-41d4-a716-446655440000",
+        "description": "Equipped with massage table and equipment"
+      },
+      {
+        "id": "550e8400-e29b-41d4-a716-446655440007",
+        "name": "Ultrasound Machine",
+        "type": "equipment",
+        "clinicId": "550e8400-e29b-41d4-a716-446655440000"
+      }
     ]
   }
 }
 ```
 
----
+### 8. Create Resource
 
-#### **GET /bookings** ⭐ (Protected)
-List user's bookings.
+```http
+POST /api/v1/staff/resources
+Authorization: Bearer <accessToken>
+Content-Type: application/json
 
-**Query Parameters:**
-- `page` - Page number
-- `limit` - Items per page
-- `status` - Filter by status (confirmed, cancelled, completed, no_show)
+{
+  "name": "New Treatment Room",
+  "type": "room",
+  "description": "Newly renovated room with modern equipment"
+}
+```
 
-**Response:** `200 OK`
+**Response (201 Created):**
 ```json
 {
   "success": true,
-  "data": [
-    {
-      "id": "booking-uuid",
-      "clinicId": "clinic-uuid",
-      "therapistId": "therapist-uuid",
-      "serviceId": "service-uuid",
-      "appointmentDate": "2026-05-10",
-      "startTime": "10:00",
-      "endTime": "11:00",
-      "status": "confirmed",
-      "notes": "Back pain treatment",
-      "createdAt": "2026-04-27T..."
-    }
-  ],
-  "total": 5,
-  "page": 1
+  "data": {
+    "id": "550e8400-e29b-41d4-a716-446655440008",
+    /* ... resource details ... */
+  }
 }
 ```
 
 ---
 
-#### **POST /bookings** ⭐ (Protected)
-Create new booking.
+## 📅 BOOKING Endpoints
 
-**Request:**
+### 1. Get Available Slots
+
+```http
+GET /api/v1/bookings/slots?therapistId=550e8400-e29b-41d4-a716-446655440004&date=2026-05-15&serviceDuration=45
+Authorization: Bearer <accessToken>
+```
+
+**Response (200 OK):**
 ```json
 {
-  "clinicId": "clinic-uuid",
-  "therapistId": "therapist-uuid",
-  "serviceId": "service-uuid",
-  "appointmentDate": "2026-05-10",
+  "success": true,
+  "data": {
+    "availableSlots": [
+      { "startTime": "09:00", "endTime": "09:45" },
+      { "startTime": "10:00", "endTime": "10:45" },
+      { "startTime": "11:00", "endTime": "11:45" }
+    ]
+  }
+}
+```
+
+### 2. Create Booking
+
+```http
+POST /api/v1/bookings
+Authorization: Bearer <accessToken>
+Content-Type: application/json
+
+{
+  "clinicId": "550e8400-e29b-41d4-a716-446655440000",
+  "therapistId": "550e8400-e29b-41d4-a716-446655440004",
+  "serviceId": "550e8400-e29b-41d4-a716-446655440003",
+  "appointmentDate": "2026-05-15",
   "startTime": "10:00",
-  "endTime": "11:00",
-  "notes": "Back pain treatment"
+  "endTime": "10:45",
+  "notes": "First time patient, knee pain"
 }
 ```
 
-**Response:** `201 Created`
+**Response (201 Created):**
 ```json
 {
   "success": true,
   "data": {
-    "id": "booking-uuid",
-    "appointmentDate": "2026-05-10",
+    "id": "550e8400-e29b-41d4-a716-446655440009",
+    "patientId": "550e8400-e29b-41d4-a716-446655440000",
+    "therapistId": "550e8400-e29b-41d4-a716-446655440004",
+    "clinicId": "550e8400-e29b-41d4-a716-446655440000",
+    "appointmentDate": "2026-05-15",
     "startTime": "10:00",
+    "endTime": "10:45",
     "status": "confirmed",
-    "confirmationEmail": "sent"
+    "totalAmount": 100.00,
+    "currency": "LKR"
   }
 }
 ```
 
----
+### 3. List Bookings
 
-#### **GET /bookings/:bookingId** ⭐ (Protected)
-Get booking details.
+```http
+GET /api/v1/bookings?status=confirmed&limit=10
+Authorization: Bearer <accessToken>
+```
 
-**Response:** `200 OK`
+**Response (200 OK):**
 ```json
 {
   "success": true,
   "data": {
-    "id": "booking-uuid",
-    "clinic": { /* clinic data */ },
-    "therapist": { /* therapist data */ },
-    "service": { /* service data */ },
-    "appointmentDate": "2026-05-10",
-    "startTime": "10:00",
-    "endTime": "11:00",
-    "status": "confirmed",
-    "notes": "Back pain treatment"
+    "bookings": [ /* array of bookings */ ]
   }
 }
 ```
 
----
+### 4. Get Booking Details
 
-#### **PATCH /bookings/:bookingId/status** ⭐ (Protected - Admin/Therapist+)
-Update booking status.
+```http
+GET /api/v1/bookings/:bookingId
+Authorization: Bearer <accessToken>
+```
 
-**Request:**
+**Response (200 OK):**
 ```json
+{
+  "success": true,
+  "data": {
+    "id": "550e8400-e29b-41d4-a716-446655440009",
+    /* ... booking details ... */
+  }
+}
+```
+
+### 5. Update Booking Status
+
+```http
+PATCH /api/v1/bookings/:bookingId/status
+Authorization: Bearer <accessToken>
+Content-Type: application/json
+
 {
   "status": "completed"
 }
 ```
 
-**Valid statuses:** `confirmed`, `cancelled`, `completed`, `no_show`
+**Status Options:** `confirmed`, `cancelled`, `completed`, `no_show`
 
-**Response:** `200 OK`
+**Response (200 OK):**
 ```json
 {
   "success": true,
-  "message": "Booking status updated to completed"
+  "message": "Booking status updated"
 }
 ```
 
----
+### 6. Reschedule Booking
 
-#### **PUT /bookings/:bookingId/reschedule** ⭐ (Protected)
-Reschedule booking.
+```http
+PUT /api/v1/bookings/:bookingId/reschedule
+Authorization: Bearer <accessToken>
+Content-Type: application/json
 
-**Request:**
-```json
 {
-  "appointmentDate": "2026-05-12",
+  "appointmentDate": "2026-05-16",
   "startTime": "14:00",
-  "endTime": "15:00"
+  "endTime": "14:45"
 }
 ```
 
-**Response:** `200 OK`
+**Response (200 OK):**
 ```json
 {
   "success": true,
-  "message": "Booking rescheduled"
+  "message": "Booking rescheduled successfully"
+}
+```
+
+### 7. Cancel Booking
+
+```http
+POST /api/v1/bookings/:bookingId/cancel
+Authorization: Bearer <accessToken>
+Content-Type: application/json
+
+{
+  "reason": "Doctor advised rest"
+}
+```
+
+**Response (200 OK):**
+```json
+{
+  "success": true,
+  "message": "Booking cancelled successfully"
 }
 ```
 
 ---
 
-#### **POST /bookings/:bookingId/cancel** ⭐ (Protected)
-Cancel booking.
+## 💳 PAYMENT Endpoints
 
-**Request:**
-```json
+### 1. Create Payment Intent
+
+```http
+POST /api/v1/payments/intent
+Authorization: Bearer <accessToken>
+Content-Type: application/json
+
 {
-  "reason": "Schedule conflict"
+  "bookingId": "550e8400-e29b-41d4-a716-446655440009",
+  "amount": 100.00,
+  "currency": "LKR"
 }
 ```
 
-**Response:** `200 OK`
-```json
-{
-  "success": true,
-  "message": "Booking cancelled"
-}
-```
-
----
-
-### **💳 Payment Endpoints** (`/payments`)
-
-#### **POST /payments/intent** ⭐ (Protected)
-Create Stripe payment intent.
-
-**Request:**
-```json
-{
-  "bookingId": "booking-uuid",
-  "amount": 100,
-  "currency": "USD"
-}
-```
-
-**Response:** `200 OK`
+**Response (201 Created):**
 ```json
 {
   "success": true,
   "data": {
-    "clientSecret": "pi_1234567890_secret_xxx",
-    "amount": 100,
-    "currency": "USD"
+    "clientSecret": "pi_1234567890_secret_abcdefgh",
+    "amount": 100.00,
+    "currency": "LKR",
+    "bookingId": "550e8400-e29b-41d4-a716-446655440009"
   }
 }
 ```
 
----
+### 2. List Payments
 
-#### **GET /payments** ⭐ (Protected)
-List user's payments.
+```http
+GET /api/v1/payments
+Authorization: Bearer <accessToken>
+```
 
-**Response:** `200 OK`
+**Response (200 OK):**
 ```json
 {
   "success": true,
-  "data": [
-    {
-      "id": "payment-uuid",
-      "bookingId": "booking-uuid",
-      "amount": 100,
-      "currency": "USD",
-      "status": "succeeded",
-      "stripePaymentId": "pi_xxx",
-      "createdAt": "2026-04-27T..."
-    }
-  ]
+  "data": {
+    "payments": [
+      {
+        "id": "550e8400-e29b-41d4-a716-446655440010",
+        "bookingId": "550e8400-e29b-41d4-a716-446655440009",
+        "amount": 100.00,
+        "currency": "LKR",
+        "status": "succeeded",
+        "stripePaymentId": "pi_1234567890",
+        "createdAt": "2026-05-15T10:30:00Z"
+      }
+    ]
+  }
 }
 ```
 
----
+### 3. Get Payment Details
 
-#### **GET /payments/:paymentId** ⭐ (Protected)
-Get payment details.
+```http
+GET /api/v1/payments/:paymentId
+Authorization: Bearer <accessToken>
+```
 
-**Response:** `200 OK`
+**Response (200 OK):**
 ```json
 {
   "success": true,
@@ -1382,244 +1428,294 @@ Get payment details.
 }
 ```
 
----
+### 4. Get Revenue Summary (Admin)
 
-#### **GET /payments/revenue** ⭐ (Protected - Admin+)
-Get revenue summary.
+```http
+GET /api/v1/payments/revenue?dateFrom=2026-04-01&dateTo=2026-04-30
+Authorization: Bearer <accessToken>
+```
 
-**Query Parameters:**
-- `dateFrom` - Start date (YYYY-MM-DD)
-- `dateTo` - End date (YYYY-MM-DD)
-
-**Response:** `200 OK`
+**Response (200 OK):**
 ```json
 {
   "success": true,
   "data": {
-    "totalRevenue": 5000,
-    "totalPayments": 50,
-    "averagePayment": 100,
-    "periodStart": "2026-04-01",
-    "periodEnd": "2026-04-30"
+    "totalRevenue": 15000.00,
+    "totalPayments": 45,
+    "currency": "LKR",
+    "dateRange": {
+      "from": "2026-04-01",
+      "to": "2026-04-30"
+    }
   }
 }
 ```
 
----
+### 5. Refund Payment (Admin)
 
-#### **POST /payments/:paymentId/refund** ⭐ (Protected - Admin+)
-Refund payment.
+```http
+POST /api/v1/payments/:paymentId/refund
+Authorization: Bearer <accessToken>
+Content-Type: application/json
 
-**Request:**
-```json
 {
-  "amount": 100,
-  "reason": "customer_request"
+  "amount": 100.00,
+  "reason": "requested_by_customer"
 }
 ```
 
-**Response:** `200 OK`
-```json
-{
-  "success": true,
-  "message": "Refund processed"
-}
-```
+**Reason Options:** `duplicate`, `fraudulent`, `requested_by_customer`
 
----
-
-#### **POST /payments/webhook** (No Auth)
-Stripe webhook handler (called by Stripe servers).
-
-**Note:** Signature verification required. Raw body must be used.
-
----
-
-### **💬 Communication Endpoints** (`/communications`)
-
-#### **GET /communications/conversations** ⭐ (Protected)
-List user's conversations.
-
-**Response:** `200 OK`
+**Response (200 OK):**
 ```json
 {
   "success": true,
-  "data": [
-    {
-      "id": "conversation-uuid",
-      "participantId": "user-uuid",
-      "participantName": "Dr. Jane Smith",
-      "lastMessage": "See you next week",
-      "lastMessageTime": "2026-04-27T15:30:00Z",
-      "unreadCount": 2
-    }
-  ]
+  "message": "Refund processed successfully"
 }
 ```
+
+### 6. Stripe Webhook (No Auth)
+
+```http
+POST /api/v1/payments/webhook
+Content-Type: application/json
+Stripe-Signature: t=timestamp,v1=signature
+
+{
+  "id": "evt_1234567890",
+  "object": "event",
+  "type": "payment_intent.succeeded",
+  "data": { ... }
+}
+```
+
+**Automatically handled by Stripe libraries. No response needed.**
 
 ---
 
-#### **POST /communications/conversations** ⭐ (Protected)
-Get or create conversation.
+## 💬 COMMUNICATION Endpoints
 
-**Request:**
-```json
+### 1. Get or Create Conversation
+
+```http
+POST /api/v1/communications/conversations
+Authorization: Bearer <accessToken>
+Content-Type: application/json
+
 {
-  "therapistId": "therapist-uuid"
+  "therapistId": "550e8400-e29b-41d4-a716-446655440004"
 }
 ```
 
-**Response:** `200 OK`
+**Response (201 Created or 200 OK):**
 ```json
 {
   "success": true,
   "data": {
-    "id": "conversation-uuid",
-    "participantId": "therapist-uuid"
+    "id": "550e8400-e29b-41d4-a716-446655440011",
+    "participantIds": [
+      "550e8400-e29b-41d4-a716-446655440000",
+      "550e8400-e29b-41d4-a716-446655440004"
+    ],
+    "createdAt": "2026-05-15T10:30:00Z"
   }
 }
 ```
 
----
+### 2. List Conversations
 
-#### **GET /communications/conversations/:conversationId/messages** ⭐ (Protected)
-Get conversation messages.
+```http
+GET /api/v1/communications/conversations
+Authorization: Bearer <accessToken>
+```
 
-**Query Parameters:**
-- `limit` - Number of messages to fetch (default: 50)
-
-**Response:** `200 OK`
+**Response (200 OK):**
 ```json
 {
   "success": true,
-  "data": [
-    {
-      "id": "message-uuid",
-      "senderId": "user-uuid",
-      "body": "I have a question about my therapy",
-      "type": "text",
-      "createdAt": "2026-04-27T15:30:00Z"
-    }
-  ]
+  "data": {
+    "conversations": [
+      {
+        "id": "550e8400-e29b-41d4-a716-446655440011",
+        "participantIds": [ /* ... */ ],
+        "lastMessage": "Thanks for the guidance!",
+        "lastMessageAt": "2026-05-15T14:22:00Z"
+      }
+    ]
+  }
 }
 ```
 
----
+### 3. Get Messages
 
-#### **POST /communications/conversations/:conversationId/messages** ⭐ (Protected)
-Send message.
+```http
+GET /api/v1/communications/conversations/:conversationId/messages
+Authorization: Bearer <accessToken>
+```
 
-**Request:**
+**Response (200 OK):**
 ```json
 {
-  "body": "Thanks for the advice!",
+  "success": true,
+  "data": {
+    "messages": [
+      {
+        "id": "550e8400-e29b-41d4-a716-446655440012",
+        "conversationId": "550e8400-e29b-41d4-a716-446655440011",
+        "senderId": "550e8400-e29b-41d4-a716-446655440000",
+        "body": "I have a question about my exercises",
+        "messageType": "text",
+        "createdAt": "2026-05-15T10:30:00Z"
+      }
+    ]
+  }
+}
+```
+
+### 4. Send Message
+
+```http
+POST /api/v1/communications/conversations/:conversationId/messages
+Authorization: Bearer <accessToken>
+Content-Type: application/json
+
+{
+  "body": "Thanks for the guidance!",
   "messageType": "text"
 }
 ```
 
-**Response:** `201 Created`
+**Response (201 Created):**
 ```json
 {
   "success": true,
   "data": {
-    "id": "message-uuid",
-    "body": "Thanks for the advice!",
-    "createdAt": "2026-04-27T15:30:00Z"
+    "id": "550e8400-e29b-41d4-a716-446655440013",
+    "conversationId": "550e8400-e29b-41d4-a716-446655440011",
+    "senderId": "550e8400-e29b-41d4-a716-446655440000",
+    "body": "Thanks for the guidance!",
+    "messageType": "text",
+    "createdAt": "2026-05-15T14:22:00Z"
+  }
+}
+```
+
+### 5. Save Clinical Note
+
+```http
+PUT /api/v1/communications/bookings/:bookingId/notes
+Authorization: Bearer <accessToken>
+Content-Type: application/json
+
+{
+  "subjective": "Patient reports knee pain since last week",
+  "objective": "Range of motion limited, slight swelling",
+  "assessment": "Likely ACL strain",
+  "plan": "Rest, ice, compression, elevation. Follow-up in 1 week"
+}
+```
+
+**Response (200 OK):**
+```json
+{
+  "success": true,
+  "message": "Clinical note saved successfully"
+}
+```
+
+### 6. Get Clinical Note
+
+```http
+GET /api/v1/communications/bookings/:bookingId/notes
+Authorization: Bearer <accessToken>
+```
+
+**Response (200 OK):**
+```json
+{
+  "success": true,
+  "data": {
+    "bookingId": "550e8400-e29b-41d4-a716-446655440009",
+    "therapistId": "550e8400-e29b-41d4-a716-446655440004",
+    "subjective": "Patient reports knee pain...",
+    "objective": "Range of motion limited...",
+    "assessment": "Likely ACL strain",
+    "plan": "Rest, ice, compression...",
+    "createdAt": "2026-05-15T10:30:00Z",
+    "updatedAt": "2026-05-15T10:30:00Z"
   }
 }
 ```
 
 ---
 
-#### **PUT /communications/bookings/:bookingId/notes** ⭐ (Protected - Therapist+)
-Save clinical notes (SOAP format).
+## 👨‍💼 ADMIN Endpoints
 
-**Request:**
-```json
-{
-  "subjective": "Patient reports pain level 6/10",
-  "objective": "ROM: 0-90 degrees, Strength: 4/5",
-  "assessment": "Acute lower back strain",
-  "plan": "Continue PT, prescribe exercises"
-}
+All admin endpoints require `super_admin` role.
+
+### 1. Get Platform Statistics
+
+```http
+GET /api/v1/admin/stats
+Authorization: Bearer <accessToken>
 ```
 
-**Response:** `200 OK`
-```json
-{
-  "success": true,
-  "message": "Clinical notes saved"
-}
-```
-
----
-
-#### **GET /communications/bookings/:bookingId/notes** ⭐ (Protected - Therapist+)
-Get clinical notes.
-
-**Response:** `200 OK`
+**Response (200 OK):**
 ```json
 {
   "success": true,
   "data": {
-    "bookingId": "booking-uuid",
-    "subjective": "Patient reports...",
-    "objective": "ROM:...",
-    "assessment": "...",
-    "plan": "...",
-    "savedAt": "2026-04-27T..."
+    "totalUsers": 1250,
+    "totalClinics": 15,
+    "totalTherapists": 45,
+    "totalBookings": 3500,
+    "totalRevenue": 125000.00,
+    "activeBookings": 120,
+    "revenueThisMonth": 18500.00
   }
 }
 ```
 
----
+### 2. List All Clinics
 
-### **⚙️ Admin Endpoints** (`/admin`)
+```http
+GET /api/v1/admin/clinics
+Authorization: Bearer <accessToken>
+```
 
-#### **GET /admin/stats** ⭐ (Protected - Super Admin only)
-Get platform statistics.
-
-**Response:** `200 OK`
+**Response (200 OK):**
 ```json
 {
   "success": true,
   "data": {
-    "totalUsers": 150,
-    "totalClinics": 12,
-    "totalBookings": 500,
-    "totalRevenue": 25000,
-    "activeBookings": 45,
-    "completedBookings": 455
+    "clinics": [
+      {
+        "id": "550e8400-e29b-41d4-a716-446655440000",
+        "name": "Central Physio Clinic",
+        "city": "New York",
+        "phone": "+12125551234",
+        "isActive": true,
+        "staffCount": 8,
+        "bookingCount": 250
+      }
+    ]
   }
 }
 ```
 
----
+### 3. Set Clinic Active/Inactive
 
-#### **GET /admin/clinics** ⭐ (Protected - Super Admin only)
-List all clinics.
+```http
+PATCH /api/v1/admin/clinics/:clinicId/status
+Authorization: Bearer <accessToken>
+Content-Type: application/json
 
-**Response:** `200 OK`
-```json
-{
-  "success": true,
-  "data": [ /* array of all clinics */ ]
-}
-```
-
----
-
-#### **PATCH /admin/clinics/:clinicId/status** ⭐ (Protected - Super Admin only)
-Activate or deactivate clinic.
-
-**Request:**
-```json
 {
   "isActive": false
 }
 ```
 
-**Response:** `200 OK`
+**Response (200 OK):**
 ```json
 {
   "success": true,
@@ -1627,375 +1723,576 @@ Activate or deactivate clinic.
 }
 ```
 
----
+### 4. Get Audit Logs
 
-#### **GET /admin/audit-logs** ⭐ (Protected - Super Admin only)
-Get audit logs.
+```http
+GET /api/v1/admin/audit-logs?page=1&limit=50
+Authorization: Bearer <accessToken>
+```
 
-**Query Parameters:**
-- `page` - Page number
-- `limit` - Items per page
-
-**Response:** `200 OK`
+**Response (200 OK):**
 ```json
 {
   "success": true,
-  "data": [
-    {
-      "id": "log-uuid",
-      "userId": "user-uuid",
-      "action": "create_booking",
-      "entityType": "booking",
-      "entityId": "booking-uuid",
-      "timestamp": "2026-04-27T15:30:00Z"
-    }
-  ]
+  "data": {
+    "logs": [
+      {
+        "id": "550e8400-e29b-41d4-a716-446655440014",
+        "userId": "550e8400-e29b-41d4-a716-446655440000",
+        "action": "CREATE_BOOKING",
+        "resourceType": "booking",
+        "resourceId": "550e8400-e29b-41d4-a716-446655440009",
+        "changes": { /* ... */ },
+        "timestamp": "2026-05-15T10:30:00Z"
+      }
+    ],
+    "pagination": { "page": 1, "limit": 50, "total": 500 }
+  }
 }
 ```
 
 ---
 
-## ⚠️ Error Handling
+## WebSocket (Real-time Chat)
 
-### **HTTP Status Codes**
-
-| Code | Meaning | When Used |
-|------|---------|-----------|
-| **200** | OK | Successful GET, PUT, PATCH, DELETE |
-| **201** | Created | Successful POST (resource created) |
-| **400** | Bad Request | Invalid input, validation error |
-| **401** | Unauthorized | Missing/invalid authentication token |
-| **403** | Forbidden | Insufficient permissions |
-| **404** | Not Found | Resource doesn't exist |
-| **409** | Conflict | Duplicate resource (email exists, etc) |
-| **413** | Payload Too Large | File upload exceeds size limit |
-| **422** | Unprocessable Entity | Validation failed |
-| **500** | Server Error | Internal server error |
-
-### **Common Error Codes**
+### Connection
 
 ```javascript
-{
-  "VALIDATION_ERROR": "Request validation failed",
-  "AUTH_ERROR": "Invalid or expired token",
-  "DUPLICATE_RESOURCE": "Email already registered",
-  "INVALID_REFERENCE": "Referenced resource not found",
-  "NOT_FOUND": "Resource not found",
-  "PAYMENT_ERROR": "Payment processing failed",
-  "INSUFFICIENT_PERMISSIONS": "You don't have permission",
-  "CORS_ERROR": "Origin not allowed",
-  "FILE_TOO_LARGE": "File exceeds 5MB limit",
-  "INTERNAL_ERROR": "Unexpected server error"
-}
-```
-
-### **Error Response Examples**
-
-**Validation Error:**
-```json
-{
-  "success": false,
-  "error": "VALIDATION_ERROR",
-  "message": "Request validation failed",
-  "details": [
-    { "field": "email", "message": "Invalid email format" }
-  ]
-}
-```
-
-**Duplicate Resource:**
-```json
-{
-  "success": false,
-  "error": "DUPLICATE_RESOURCE",
-  "message": "Email already registered"
-}
-```
-
-**Not Found:**
-```json
-{
-  "success": false,
-  "error": "NOT_FOUND",
-  "message": "Clinic not found"
-}
-```
-
----
-
-## 🔒 Security
-
-### **Security Features**
-
-- ✅ **HTTPS/TLS** - All traffic encrypted
-- ✅ **Helmet.js** - Security headers
-- ✅ **CORS** - Origin whitelisting
-- ✅ **JWT** - Token-based authentication (RS256)
-- ✅ **Password Hashing** - bcryptjs
-- ✅ **Input Validation** - Express-validator
-- ✅ **SQL Injection Protection** - Parameterized queries
-- ✅ **Rate Limiting** - Redis-based
-- ✅ **RBAC** - Role-based access control
-- ✅ **2FA** - Two-factor authentication support
-
-### **Authentication Best Practices**
-
-1. **Always use HTTPS** - Never transmit tokens over HTTP
-2. **Store tokens securely** - Use localStorage or secure cookies
-3. **Add token to headers** - `Authorization: Bearer <token>`
-4. **Handle token expiry** - Refresh when expired
-5. **Clear on logout** - Remove tokens from storage
-6. **Use HTTPS only cookies** - For refresh tokens (HttpOnly flag)
-
-### **Password Requirements**
-
-- Minimum 8 characters
-- At least one uppercase letter
-- At least one lowercase letter
-- At least one number
-- No dictionary words
-
----
-
-## 🚦 Rate Limiting
-
-### **Limits**
-
-| Endpoint | Limit | Window |
-|----------|-------|--------|
-| **/auth (register/login)** | 10 requests | 15 minutes |
-| **/auth/2fa/verify** | 5 attempts | 15 minutes |
-| **All API routes** | 100 requests | 15 minutes |
-
-### **Rate Limit Headers**
-
-```
-X-RateLimit-Limit: 100
-X-RateLimit-Remaining: 99
-X-RateLimit-Reset: 1609459200
-```
-
-### **Rate Limit Exceeded**
-
-```json
-{
-  "statusCode": 429,
-  "message": "Too many requests, please try again later"
-}
-```
-
----
-
-## 🔌 WebSocket (Real-time Chat)
-
-### **Connection**
-
-```javascript
-import io from 'socket.io-client';
-
-const socket = io('https://physiobook-api-jvye.onrender.com', {
+const socket = io('https://physiobook-api.onrender.com', {
   auth: {
-    token: accessToken
+    token: 'eyJhbGciOiJIUzI1NiIs...'  // JWT access token
   }
 });
 ```
 
-### **Events**
+### Events
 
-**Send Message:**
+#### Subscribe to Conversation
+
 ```javascript
-socket.emit('send_message', {
-  conversationId: 'conversation-uuid',
-  message: 'Hello!'
+// Client → Server
+socket.emit('subscribe', {
+  conversationId: '550e8400-e29b-41d4-a716-446655440011'
 });
 ```
 
-**Receive Message:**
+#### Send Message (Real-time)
+
 ```javascript
-socket.on('receive_message', (data) => {
-  console.log('New message:', data.message);
+// Client → Server
+socket.emit('message', {
+  conversationId: '550e8400-e29b-41d4-a716-446655440011',
+  body: 'Hello!',
+  messageType: 'text'
+});
+
+// Server → All participants
+socket.on('message', (data) => {
+  console.log('New message:', data);
+  // {
+  //   id: '...',
+  //   conversationId: '...',
+  //   senderId: '...',
+  //   body: 'Hello!',
+  //   messageType: 'text',
+  //   createdAt: '2026-05-15T14:22:00Z'
+  // }
 });
 ```
 
-**User Online:**
+#### Typing Indicator
+
 ```javascript
-socket.on('user_online', (data) => {
-  console.log('User is online:', data.userId);
+// Client → Server
+socket.emit('typing', {
+  conversationId: '550e8400-e29b-41d4-a716-446655440011',
+  isTyping: true
+});
+
+// Server → Other participants
+socket.on('user_typing', (data) => {
+  console.log('User is typing:', data);
+  // { userId: '...', conversationId: '...', isTyping: true }
 });
 ```
 
-**User Offline:**
+#### Online Status
+
 ```javascript
-socket.on('user_offline', (data) => {
-  console.log('User went offline:', data.userId);
+// Server → Client (automatic on connection)
+socket.on('online', (data) => {
+  console.log('User online:', data);
+  // { userId: '...', status: 'online' }
+});
+
+// Server → Client (automatic on disconnect)
+socket.on('offline', (data) => {
+  console.log('User offline:', data);
+  // { userId: '...', status: 'offline' }
 });
 ```
 
 ---
 
-## 🧪 Testing
+## Database Schema Overview
 
-### **Using Postman**
+### Core Tables
 
-1. Create new collection "Physiobook API"
-2. Set base URL: `https://physiobook-api-jvye.onrender.com/api/v1`
-3. Add environment variable: `token` = access token from login
-4. Use `{{token}}` in Authorization header
+| Table | Purpose | Key Fields |
+|-------|---------|-----------|
+| `users` | User accounts | id, email, password_hash, role, is_active |
+| `clinics` | Clinic locations | id, name, address, phone, is_active |
+| `staff` | Therapists, receptionists | id, user_id, clinic_id, role, specialization |
+| `services` | Treatment offerings | id, clinic_id, name, duration_minutes, price |
+| `bookings` | Appointments | id, patient_id, therapist_id, clinic_id, status |
+| `payments` | Payment records | id, booking_id, amount, currency, stripe_id, status |
+| `conversations` | Chat threads | id, clinic_id, participant_ids |
+| `messages` | Chat messages | id, conversation_id, sender_id, body |
+| `clinical_notes` | SOAP notes | id, booking_id, therapist_id, subjective, objective, assessment, plan |
+| `staff_schedules` | Therapist availability | id, staff_id, day_of_week, start_time, end_time |
+| `time_blocks` | Blocked slots | id, staff_id, date, start_time, end_time |
+| `resources` | Rooms/equipment | id, clinic_id, name, type |
+| `audit_logs` | Activity tracking | id, user_id, action, resource_type, changes |
 
-### **Using cURL**
+### Relationships
 
-```bash
-# Register
-curl -X POST https://physiobook-api-jvye.onrender.com/api/v1/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{
-    "firstName": "John",
-    "lastName": "Doe",
-    "email": "john@example.com",
-    "password": "SecurePass123"
-  }'
+```
+users (1) ─── (M) clinic_admins
+users (1) ─── (M) staff
+users (1) ─── (1) therapist_profiles
+users (1) ─── (M) bookings (as patient)
+users (1) ─── (M) payments (as payer)
+users (1) ─── (M) conversations (as participant)
+users (1) ─── (M) messages (as sender)
 
-# Login
-curl -X POST https://physiobook-api-jvye.onrender.com/api/v1/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{
-    "email": "john@example.com",
-    "password": "SecurePass123"
-  }'
+clinics (1) ─── (M) staff
+clinics (1) ─── (M) services
+clinics (1) ─── (M) bookings
+clinics (1) ─── (M) resources
+clinics (1) ─── (M) conversations
 
-# Get current user (with token)
-curl -X GET https://physiobook-api-jvye.onrender.com/api/v1/users/me \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
+staff (1) ─── (M) bookings (as therapist)
+staff (1) ─── (M) staff_schedules
+staff (1) ─── (M) time_blocks
+staff (1) ─── (M) clinical_notes
+
+services (1) ─── (M) bookings
+bookings (1) ─── (1) payments
+bookings (1) ─── (M) clinical_notes
+
+conversations (M) ─── (M) messages
 ```
 
-### **Health Check**
+---
 
-```bash
-curl https://physiobook-api-jvye.onrender.com/health
+## Common Integration Flows
+
+### 1. User Registration & Login Flow
+
+```javascript
+// Step 1: Register
+const registerRes = await fetch('https://api.physiobook.com/api/v1/auth/register', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    firstName: 'John',
+    lastName: 'Doe',
+    email: 'john@example.com',
+    password: 'SecurePassword123'
+  })
+});
+
+// Step 2: Verify email (check email inbox for verification link)
+// User clicks link from email
+
+// Step 3: Login
+const loginRes = await fetch('https://api.physiobook.com/api/v1/auth/login', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    email: 'john@example.com',
+    password: 'SecurePassword123'
+  })
+});
+
+const { data } = await loginRes.json();
+const { accessToken, refreshToken } = data;
+
+// Step 4: Store tokens in localStorage or session
+localStorage.setItem('accessToken', accessToken);
+localStorage.setItem('refreshToken', refreshToken);
 ```
 
-Expected response:
-```json
-{
-  "status": "ok",
-  "service": "physiobook-api",
-  "version": "1.0.0"
+### 2. Get Profile & Update Details
+
+```javascript
+// Get profile
+const meRes = await fetch('https://api.physiobook.com/api/v1/users/me', {
+  headers: { 'Authorization': `Bearer ${accessToken}` }
+});
+const { data: user } = await meRes.json();
+
+// Update profile
+const updateRes = await fetch('https://api.physiobook.com/api/v1/users/me', {
+  method: 'PUT',
+  headers: {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${accessToken}`
+  },
+  body: JSON.stringify({
+    firstName: 'Jonathan',
+    phone: '+12025551234',
+    dateOfBirth: '1990-01-01'
+  })
+});
+```
+
+### 3. Browse Clinics & Services
+
+```javascript
+// List clinics
+const clinicsRes = await fetch('https://api.physiobook.com/api/v1/clinics', {
+  headers: { 'Authorization': `Bearer ${accessToken}` }
+});
+const { data } = await clinicsRes.json();
+
+// Get clinic details
+const clinicRes = await fetch(
+  `https://api.physiobook.com/api/v1/clinics/${clinicId}`,
+  { headers: { 'Authorization': `Bearer ${accessToken}` } }
+);
+
+// Get clinic services
+const servicesRes = await fetch(
+  `https://api.physiobook.com/api/v1/clinics/${clinicId}/services`,
+  { headers: { 'Authorization': `Bearer ${accessToken}` } }
+);
+```
+
+### 4. Book an Appointment
+
+```javascript
+// Step 1: Get therapist availability
+const slotsRes = await fetch(
+  `https://api.physiobook.com/api/v1/bookings/slots?therapistId=${therapistId}&date=2026-05-15&serviceDuration=45`,
+  { headers: { 'Authorization': `Bearer ${accessToken}` } }
+);
+const { data: { availableSlots } } = await slotsRes.json();
+
+// Step 2: Create booking
+const bookingRes = await fetch('https://api.physiobook.com/api/v1/bookings', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${accessToken}`
+  },
+  body: JSON.stringify({
+    clinicId: clinicId,
+    therapistId: therapistId,
+    serviceId: serviceId,
+    appointmentDate: '2026-05-15',
+    startTime: '10:00',
+    endTime: '10:45'
+  })
+});
+
+const { data: booking } = await bookingRes.json();
+```
+
+### 5. Process Payment with Stripe
+
+```javascript
+// Step 1: Create payment intent
+const intentRes = await fetch('https://api.physiobook.com/api/v1/payments/intent', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${accessToken}`
+  },
+  body: JSON.stringify({
+    bookingId: bookingId,
+    amount: 100.00,
+    currency: 'LKR'
+  })
+});
+
+const { data: { clientSecret } } = await intentRes.json();
+
+// Step 2: Use Stripe.js to confirm payment
+const stripe = Stripe('STRIPE_PUBLISHABLE_KEY');
+const { paymentIntent } = await stripe.confirmCardPayment(clientSecret, {
+  payment_method: {
+    card: cardElement,
+    billing_details: { name: 'John Doe' }
+  }
+});
+
+// Step 3: Webhook automatically updates payment status
+```
+
+### 6. Chat with Therapist
+
+```javascript
+// Step 1: Connect WebSocket with JWT token
+const socket = io('https://physiobook-api.onrender.com', {
+  auth: { token: accessToken }
+});
+
+// Step 2: Get or create conversation
+const convRes = await fetch('https://api.physiobook.com/api/v1/communications/conversations', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${accessToken}`
+  },
+  body: JSON.stringify({ therapistId })
+});
+const { data: { id: conversationId } } = await convRes.json();
+
+// Step 3: Subscribe to conversation
+socket.emit('subscribe', { conversationId });
+
+// Step 4: Listen for messages
+socket.on('message', (msg) => {
+  console.log('New message:', msg);
+});
+
+// Step 5: Send message
+socket.emit('message', {
+  conversationId,
+  body: 'I have a question',
+  messageType: 'text'
+});
+```
+
+### 7. Handle Token Expiration
+
+```javascript
+// When access token expires (401 response)
+const refreshRes = await fetch('https://api.physiobook.com/api/v1/auth/refresh', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    refreshToken: localStorage.getItem('refreshToken')
+  })
+});
+
+if (refreshRes.ok) {
+  const { data } = await refreshRes.json();
+  localStorage.setItem('accessToken', data.accessToken);
+  localStorage.setItem('refreshToken', data.refreshToken);
+  
+  // Retry original request with new token
+} else {
+  // Refresh failed, redirect to login
+  window.location.href = '/login';
 }
 ```
 
 ---
 
-## 🐛 Troubleshooting
+## Environment Configuration
 
-### **CORS Error**
-```
-Access to XMLHttpRequest blocked by CORS policy
-```
+### Production Variables
 
-**Solutions:**
-1. Verify frontend URL in `CORS_ORIGINS` environment variable
-2. Check that backend is running
-3. Clear browser cache
-4. Ensure correct request headers
+Create a `.env` file in the `backend/` directory with these variables:
 
-### **401 Unauthorized**
-```json
-{ "error": "AUTH_ERROR", "message": "Invalid or expired token" }
-```
-
-**Solutions:**
-1. Verify token is included in Authorization header
-2. Check token format: `Bearer <token>`
-3. Refresh token if expired
-4. Re-login if token is invalid
-
-### **400 Bad Request**
-```json
-{ "error": "VALIDATION_ERROR", "message": "Request validation failed" }
-```
-
-**Solutions:**
-1. Check request body matches schema
-2. Verify all required fields are provided
-3. Ensure data types are correct
-4. Check email format, password requirements
-
-### **404 Not Found**
-```json
-{ "error": "NOT_FOUND", "message": "Clinic not found" }
-```
-
-**Solutions:**
-1. Verify resource ID is correct
-2. Check that resource exists in database
-3. Confirm you have permission to access
-
-### **429 Too Many Requests**
-```json
-{ "message": "Too many requests, please try again later" }
-```
-
-**Solutions:**
-1. Wait for rate limit window to reset
-2. Reduce request frequency
-3. Implement exponential backoff
-
-### **Backend Connection Failed**
-
-**Check:**
 ```bash
-# Test health endpoint
-curl https://physiobook-api-jvye.onrender.com/health
+# ── App ──────────────────────────────────────────────────────
+NODE_ENV=production
+PORT=4000
+API_VERSION=v1
 
-# Test CORS
-curl -X OPTIONS https://physiobook-api-jvye.onrender.com/api/v1/users/me \
-  -H "Origin: http://localhost:5173"
+# ── CORS (comma-separated) ───────────────────────────────────
+CORS_ORIGINS=https://app.physiobook.com,https://www.physiobook.com
+
+# ── JWT ──────────────────────────────────────────────────────
+JWT_ACCESS_SECRET=<64+ random characters>
+JWT_REFRESH_SECRET=<64+ random characters>
+JWT_ACCESS_EXPIRES_IN=15m
+JWT_REFRESH_EXPIRES_IN=7d
+
+# ── Database (Supabase with Connection Pooler) ───────────────
+DB_HOST=aws-1-ap-southeast-1.pooler.supabase.com
+DB_PORT=6543
+DB_NAME=postgres
+DB_USER=postgres
+DB_PASSWORD=<your-password>
+DB_SSL=true
+DB_POOL_MIN=2
+DB_POOL_MAX=10
+
+# ── Redis (Upstash) ──────────────────────────────────────────
+REDIS_HOST=nice-bulldog-106944.upstash.io
+REDIS_PORT=6379
+REDIS_PASSWORD=<your-password>
+REDIS_TLS=true
+
+# ── Stripe ────────────────────────────────────────────────────
+STRIPE_SECRET_KEY=sk_live_<your-key>
+STRIPE_PUBLISHABLE_KEY=pk_live_<your-key>
+STRIPE_WEBHOOK_SECRET=whsec_<your-key>
+STRIPE_CURRENCY=LKR
+
+# ── Email (AWS SES) ──────────────────────────────────────────
+EMAIL_PROVIDER=ses
+AWS_REGION=us-east-1
+AWS_ACCESS_KEY_ID=<your-key>
+AWS_SECRET_ACCESS_KEY=<your-secret>
+EMAIL_FROM_ADDRESS=noreply@physiobook.com
+EMAIL_FROM_NAME=Physiobook
+
+# ── AWS S3 (File Storage) ────────────────────────────────────
+AWS_S3_REGION=us-east-1
+AWS_S3_BUCKET=physiobook-uploads
+AWS_ACCESS_KEY_ID=<your-key>
+AWS_SECRET_ACCESS_KEY=<your-secret>
+
+# ── Twilio (SMS) ──────────────────────────────────────────────
+TWILIO_ACCOUNT_SID=<your-sid>
+TWILIO_AUTH_TOKEN=<your-token>
+TWILIO_PHONE_NUMBER=+1234567890
+
+# ── 2FA/TOTP ──────────────────────────────────────────────────
+TOTP_WINDOW=2
+TOTP_ISSUER=Physiobook
+
+# ── Logging ───────────────────────────────────────────────────
+LOG_LEVEL=info
+LOG_FORMAT=json
 ```
 
-**If fails:**
-1. Verify backend is deployed and running
-2. Check database connection
-3. Review Render logs for errors
-4. Verify environment variables are set correctly
+### Required Services
+
+1. **Database:** Supabase PostgreSQL (recommended: Connection Pooler for better performance)
+2. **Cache:** Redis (Upstash for serverless deployment)
+3. **Payments:** Stripe account with API keys
+4. **Email:** AWS SES or SendGrid
+5. **Storage:** AWS S3 bucket
+6. **SMS:** Twilio (optional)
+7. **Deployment:** Render.com (or any Node.js host)
 
 ---
 
-## 📞 Support
+## Troubleshooting
 
-For issues or questions:
+### Issue: 401 Unauthorized
 
-1. **Check documentation** - This guide covers 99% of use cases
-2. **Check logs** - Review browser console and server logs
-3. **Check GitHub** - Repository: https://github.com/Himal-Gunawardhana/Physiobook-backend
-4. **Health check** - Verify backend is running: `/health`
+**Cause:** Invalid or expired access token
+
+**Solution:**
+1. Check if token is included in `Authorization` header
+2. Verify token format: `Bearer <token>`
+3. Use refresh token to get new access token
+4. Re-login if refresh fails
+
+```javascript
+// Check token expiration
+const token = localStorage.getItem('accessToken');
+const decoded = jwt_decode(token);
+console.log('Expires at:', new Date(decoded.exp * 1000));
+```
+
+### Issue: CORS Error
+
+**Cause:** Frontend origin not in `CORS_ORIGINS` list
+
+**Solution:**
+1. Check `CORS_ORIGINS` environment variable
+2. Add your frontend URL to the list (comma-separated)
+3. Restart the backend server
+4. For development, ensure `http://localhost:XXXX` matches exactly
+
+### Issue: 422 Validation Error
+
+**Cause:** Request data doesn't meet validation rules
+
+**Solution:**
+1. Check the `details` array in error response
+2. Validate each field according to error messages
+3. Common issues:
+   - Email format: must be valid email
+   - Password: min 8 chars, uppercase, lowercase, number
+   - Phone: must match E.164 format (+1234567890)
+   - UUID: 36-character UUID format
+
+### Issue: Payment Fails
+
+**Cause:** Stripe configuration or payment method issue
+
+**Solution:**
+1. Verify `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` are correct
+2. Check payment method is valid
+3. Ensure amount > $0.50 (or currency equivalent)
+4. Check Stripe dashboard for webhook delivery status
+
+### Issue: Database Connection Timeout
+
+**Cause:** Network connectivity, wrong credentials, or pooler issues
+
+**Solution:**
+1. Verify `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`
+2. Use Connection Pooler for reliability: `aws-1-ap-southeast-1.pooler.supabase.com:6543`
+3. Check database is running and accessible
+4. For production, use VPC or firewall rules correctly
+5. Check server logs for connection error details
+
+### Issue: WebSocket Connection Failed
+
+**Cause:** Auth token missing or invalid
+
+**Solution:**
+```javascript
+// Ensure token is passed correctly
+const socket = io('https://api.physiobook.com', {
+  auth: {
+    token: localStorage.getItem('accessToken')  // Include valid JWT
+  }
+});
+
+socket.on('connect_error', (error) => {
+  console.error('Connection failed:', error);
+});
+```
+
+### Issue: Avatar Upload Fails
+
+**Cause:** File too large or not an image
+
+**Solution:**
+1. File must be < 5MB
+2. File must be image type (image/jpeg, image/png, etc.)
+3. Use multipart/form-data, not JSON
+4. In production, ensure S3 bucket has correct permissions
+
+### Issue: Rate Limited
+
+**Cause:** Too many requests in short time
+
+**Solution:**
+1. Implement exponential backoff in client
+2. Wait for `X-RateLimit-Reset` header (seconds since epoch)
+3. General API: max 100 req/15min
+4. Auth: max 10 req/15min
+5. OTP: max 5 req/15min
 
 ---
 
-## 📦 API Summary
+## Support & Contact
 
-- **Total Endpoints:** 59+
-- **Authentication:** JWT (RS256)
-- **Response Format:** JSON
-- **Rate Limiting:** Yes (100 req/min)
-- **CORS:** Enabled
-- **WebSocket:** Real-time chat
-- **Database:** PostgreSQL (Supabase)
-- **Cache:** Redis (Upstash)
-- **Payments:** Stripe
-- **Hosting:** Render
+- **GitHub:** https://github.com/Himal-Gunawardhana/Physiobook-backend
+- **Issues:** Report bugs via GitHub Issues
+- **Status:** Check deployment status at https://physiobook-api.onrender.com/health
 
 ---
 
-**API Documentation v1.0.0**  
+## Version History
+
+| Version | Date | Changes |
+|---------|------|---------|
+| 1.0.0 | Apr 2026 | Initial release with 59+ endpoints |
+
+---
+
 **Last Updated:** April 27, 2026  
-**Status:** Production Ready ✅
-
----
-
-## 🎯 Quick Links
-
-- **GitHub Repository:** https://github.com/Himal-Gunawardhana/Physiobook-backend
-- **API Base URL:** https://physiobook-api-jvye.onrender.com/api/v1
-- **Health Check:** https://physiobook-api-jvye.onrender.com/health
-- **Frontend Repo:** [Your frontend repo URL]
-
+**Maintained by:** Physiobook Backend Team
