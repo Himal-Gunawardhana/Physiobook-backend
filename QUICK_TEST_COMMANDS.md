@@ -1,8 +1,40 @@
 # 🚀 Quick Terminal Commands to Test Backend
 
-## 🎯 FASTEST WAY TO TEST (Copy & Paste)
+## � PRODUCTION (RENDER) - TEST YOUR LIVE BACKEND
 
-### Option 1: Run Automated Test Script
+**Live URL:** `https://physiobook-api-jvye.onrender.com`
+
+### Quick Production Tests (Copy & Paste)
+
+```bash
+# 1. Health Check
+curl https://physiobook-api-jvye.onrender.com/health | jq .
+
+# 2. Test Validation Error
+curl -X POST https://physiobook-api-jvye.onrender.com/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"invalid-email","password":"test"}' | jq .
+
+# 3. Test Auth Error (Missing Token)
+curl https://physiobook-api-jvye.onrender.com/api/v1/users/me | jq .
+
+# 4. Test Invalid Token
+curl -H "Authorization: Bearer fake_token_xyz" \
+  https://physiobook-api-jvye.onrender.com/api/v1/users/me | jq .
+```
+
+**Expected Results:**
+- ✅ Health returns 200 with `"status": "ok"`
+- ✅ Validation returns proper error format
+- ✅ Auth errors return 401 with error message
+
+---
+
+## 💻 LOCAL TESTING (Development)
+
+### 🎯 FASTEST WAY TO TEST (Copy & Paste)
+
+#### Option 1: Run Automated Test Script
 ```bash
 cd backend
 npm start                    # In one terminal
@@ -16,7 +48,7 @@ cd ..  # Go to project root
 
 ---
 
-### Option 2: Manual Testing (One Command at a Time)
+#### Option 2: Manual Testing (One Command at a Time)
 
 #### Step 1: Start Backend
 ```bash
