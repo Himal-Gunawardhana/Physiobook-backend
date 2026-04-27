@@ -30,11 +30,13 @@ const envOrigins = (process.env.CORS_ORIGINS || '').split(',')
 
 const allowedOrigins = envOrigins.length > 0 ? envOrigins : defaultOrigins;
 
-logger.info(`✅ CORS enabled for origins: ${allowedOrigins.join(', ')}`);
+logger.info(`🌐 CORS enabled for ${allowedOrigins.length} origin(s):`);
+allowedOrigins.forEach(origin => logger.info(`   - ${origin}`));
 
 app.use(cors({
   origin: (origin, cb) => {
-    // Allow requests with no origin (like mobile apps, curl, etc)
+    // Allow requests with no origin (like mobile apps, curl, Postman, etc)
+    // This is safe because we have authentication middleware
     if (!origin) return cb(null, true);
     
     // Allow if origin is in whitelist
@@ -43,12 +45,14 @@ app.use(cors({
     }
     
     // Reject if origin not in whitelist
-    logger.warn(`⚠️  CORS rejected origin: ${origin}`);
-    cb(new Error(`CORS policy does not allow origin: ${origin}`));
+    const errorMsg = `CORS policy violation: origin '${origin}' not allowed`;
+    logger.warn(`⚠️  ${errorMsg}`);
+    cb(new Error(errorMsg));
   },
-  credentials: true,
+  credentials: true,  // Allow cookies and Authorization headers
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Refresh-Token'],
+  maxAge: 86400,  // 24 hours - cache preflight requests
 }));
 
 // ── Body parsing ──────────────────────────────────────────────
@@ -75,7 +79,11 @@ app.use(`/api/${process.env.API_VERSION || 'v1'}`, routes);
 
 // ── 404 handler ───────────────────────────────────────────────
 app.use((req, res) => {
-  res.status(404).json({ success: false, error: `Route ${req.method} ${req.originalUrl} not found` });
+  res.status(404).json({
+    success: false,
+    error: 'NOT_FOUND',
+    message: `Route ${req.method} ${req.originalUrl} not found`
+  });
 });
 
 // ── Global error handler ──────────────────────────────────────
