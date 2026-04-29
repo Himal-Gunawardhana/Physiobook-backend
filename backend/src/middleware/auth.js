@@ -1,7 +1,7 @@
 'use strict';
 
 const { verifyAccessToken } = require('../utils/jwt');
-const { exists }            = require('../config/redis');
+const redis                 = require('../config/redis');
 const R                     = require('../utils/response');
 
 /**
@@ -18,7 +18,7 @@ async function authenticate(req, res, next) {
     const token = authHeader.split(' ')[1];
 
     // Check blacklist (logout / token revocation via Redis)
-    const isBlacklisted = await exists(`blacklist:${token}`);
+    const isBlacklisted = await redis.exists(`blacklist:${token}`);
     if (isBlacklisted) {
       return R.unauthorised(res, 'Token has been revoked. Please log in again.');
     }

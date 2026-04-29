@@ -1,144 +1,173 @@
 'use strict';
 
-const { v4: uuidv4 } = require('uuid');
 const bcrypt = require('bcryptjs');
-const db = require('../config/database');
+const { v4: uuidv4 } = require('uuid');
+const db     = require('../config/database');
+const { sendStaffInvite } = require('../utils/sendEmail');
 
-/**
- * Create a staff member (clinic_admin creates therapist / receptionist).
- */
-async function createStaff({ clinicId, firstName, lastName, email, phone, role, specialisations, qualifications, bio, password }) {
-  const existing = await db.query('SELECT id FROM users WHERE email=$1', [email]);
-  if (existing.rows.length) throw Object.assign(new Error('Email already in use'), { statusCode: 409 });
+// ── Staff ─────────────────────────────────────────────────────────────────────
 
-  // Use provided password (for testing/bootstrap) or generate temporary password
-  const tempPassword = password || Math.random().toString(36).slice(-8) + 'Ph1!';
-  const passwordHash = await bcrypt.hash(tempPassword, 12);
-  const userId = uuidv4();
-
-  await db.withTransaction(async (client) => {
-    await client.query(
-      `INSERT INTO users (id, first_name, last_name, email, phone, password_hash, role, clinic_id, is_email_verified, is_active)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,true,true)`,
-      [userId, firstName, lastName, email, phone, passwordHash, role, clinicId]
-    );
-
-    if (role === 'therapist') {
-      await client.query(
-        `INSERT INTO therapist_profiles (id, user_id, clinic_id, specialisations, qualifications, bio)
-         VALUES ($1,$2,$3,$4,$5,$6)`,
-        [uuidv4(), userId, clinicId, specialisations || [], qualifications || [], bio || '']
-      );
-    }
-  });
-
-  // PLACEHOLDER: Send welcome email with temp password
-  // await notificationService.sendStaffWelcome(email, firstName, tempPassword);
-
-  return { userId, email, tempPassword };
-}
-
-/**
- * Get a list of staff for a clinic.
- */
-async function listStaff({ clinicId, role, page = 1, limit = 20 }) {
-  const offset = (page - 1) * limit;
-  const params = [clinicId];
-  let roleFilter = '';
-  if (role) { params.push(role); roleFilter = `AND u.role = $${params.length}`; }
-  params.push(limit, offset);
-
+async function listStaff(clinicId) {
   const { rows } = await db.query(
-    `SELECT u.id, u.first_name, u.last_name, u.email, u.phone, u.role, u.avatar_url, u.is_active,
-            tp.specialisations, tp.bio
-     FROM users u
-     LEFT JOIN therapist_profiles tp ON tp.user_id = u.id
-     WHERE u.clinic_id=$1 ${roleFilter} AND u.role IN ('therapist','receptionist','clinic_admin')
-     ORDER BY u.first_name ASC
-     LIMIT $${params.length - 1} OFFSET $${params.length}`,
-    params
-  );
-
-  const cParams = [clinicId];
-  if (role) cParams.push(role);
-  const { rows: cr } = await db.query(
-    `SELECT COUNT(*) FROM users WHERE clinic_id=$1 ${role ? `AND role=$2` : ''} AND role IN ('therapist','receptionist','clinic_admin')`,
-    cParams
-  );
-  return { rows, total: parseInt(cr[0].count, 10) };
-}
-
-/**
- * Get therapist profile detail.
- */
-async function getTherapistProfile(userId) {
-  const { rows } = await db.query(
-    `SELECT u.id, u.first_name, u.last_name, u.email, u.phone, u.avatar_url,
-            tp.specialisations, tp.qualifications, tp.bio, tp.years_of_experience, tp.consultation_fee
-     FROM users u
-     JOIN therapist_profiles tp ON tp.user_id = u.id
-     WHERE u.id=$1`,
-    [userId]
-  );
-  if (!rows.length) throw Object.assign(new Error('Therapist not found'), { statusCode: 404 });
-  return rows[0];
-}
-
-/**
- * Get therapist availability slots.
- */
-async function getAvailability(therapistId, date) {
-  const { rows } = await db.query(
-    `SELECT * FROM therapist_availability
-     WHERE therapist_id=$1 AND available_date=$2 AND is_blocked=false
-     ORDER BY start_time`,
-    [therapistId, date]
+    `SELECT cs.id, cs.role_in_clinic, cs.specialization, cs.experience_years,
+            cs.rating, cs.auto_rank, cs.status, cs.created_at,
+            u.id AS user_id, u.first_name, u.last_name, u.email, u.phone, u.avatar_url
+     FROM clinic_staff cs
+     JOIN users u ON u.id = cs.user_id
+     WHERE cs.clinic_id = $1
+     ORDER BY cs.rating DESC, cs.experience_years DESC`,
+    [clinicId]
   );
   return rows;
 }
 
-/**
- * Set therapist recurring weekly availability.
- */
-async function setWeeklySchedule(therapistId, scheduleArray) {
-  return db.withTransaction(async (client) => {
-    await client.query('DELETE FROM therapist_weekly_schedule WHERE therapist_id=$1', [therapistId]);
-    for (const s of scheduleArray) {
-      await client.query(
-        'INSERT INTO therapist_weekly_schedule (id, therapist_id, day_of_week, start_time, end_time, is_active) VALUES ($1,$2,$3,$4,$5,true)',
-        [uuidv4(), therapistId, s.dayOfWeek, s.startTime, s.endTime]
-      );
-    }
-  });
-}
+async function addStaff(clinicId, data) {
+  let userId = data.userId;
 
-/**
- * Block / unblock specific availability slot.
- */
-async function blockSlot(therapistId, { date, startTime, endTime, reason }) {
-  const id = uuidv4();
+  // Create user account if no userId supplied
+  if (!userId) {
+    const existing = await db.query('SELECT id FROM users WHERE email=$1', [data.email.toLowerCase()]);
+    if (existing.rows.length) {
+      userId = existing.rows[0].id;
+    } else {
+      const tempPassword = _generateTempPassword();
+      const passwordHash = await bcrypt.hash(tempPassword, 12);
+      userId = uuidv4();
+      await db.query(
+        `INSERT INTO users (id, first_name, last_name, email, password_hash, role, is_email_verified, is_active)
+         VALUES ($1,$2,$3,$4,$5,$6,true,true)`,
+        [userId, data.firstName, data.lastName, data.email.toLowerCase(), passwordHash, data.role || 'therapist']
+      );
+
+      // Send invite email (fire-and-forget)
+      const clinic = await db.query('SELECT name FROM clinics WHERE id=$1', [clinicId]);
+      const clinicName = clinic.rows[0]?.name || 'your clinic';
+      sendStaffInvite(data.email, {
+        inviteeName: `${data.firstName} ${data.lastName}`,
+        clinicName,
+        tempPassword,
+        loginUrl: (process.env.FRONTEND_URL || 'https://physiobook.vercel.app') + '/login',
+      }).catch(() => {});
+    }
+  }
+
+  // Upsert clinic_staff entry
+  const staffId = uuidv4();
   const { rows } = await db.query(
-    'INSERT INTO therapist_availability (id,therapist_id,available_date,start_time,end_time,is_blocked,block_reason) VALUES ($1,$2,$3,$4,$5,true,$6) RETURNING *',
-    [id, therapistId, date, startTime, endTime, reason]
+    `INSERT INTO clinic_staff (id, clinic_id, user_id, role_in_clinic, specialization, experience_years, rating, status)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+     ON CONFLICT (clinic_id, user_id) DO UPDATE
+       SET role_in_clinic=EXCLUDED.role_in_clinic, specialization=EXCLUDED.specialization,
+           experience_years=EXCLUDED.experience_years, status=EXCLUDED.status
+     RETURNING *`,
+    [staffId, clinicId, userId, data.roleInClinic || 'therapist',
+     data.specialization || null, data.experienceYears || 0, data.rating || 0,
+     data.status || 'available']
   );
+
   return rows[0];
 }
 
-/**
- * Manage clinic resources (rooms, equipment).
- */
-async function listResources(clinicId) {
-  const { rows } = await db.query('SELECT * FROM resources WHERE clinic_id=$1 AND is_active=true ORDER BY name', [clinicId]);
+async function updateStaff(clinicId, staffId, data) {
+  const fields = []; const vals = [];
+  if (data.specialization  !== undefined) { fields.push(`specialization=$${fields.length+1}`);   vals.push(data.specialization); }
+  if (data.experienceYears !== undefined) { fields.push(`experience_years=$${fields.length+1}`); vals.push(data.experienceYears); }
+  if (data.rating          !== undefined) { fields.push(`rating=$${fields.length+1}`);           vals.push(data.rating); }
+  if (data.status          !== undefined) { fields.push(`status=$${fields.length+1}`);           vals.push(data.status); }
+  if (data.roleInClinic    !== undefined) { fields.push(`role_in_clinic=$${fields.length+1}`);   vals.push(data.roleInClinic); }
+  if (data.autoRank        !== undefined) { fields.push(`auto_rank=$${fields.length+1}`);        vals.push(data.autoRank); }
+  if (!fields.length) throw Object.assign(new Error('Nothing to update'), { statusCode: 400 });
+  vals.push(staffId, clinicId);
+  const { rows } = await db.query(
+    `UPDATE clinic_staff SET ${fields.join(',')} WHERE id=$${vals.length-1} AND clinic_id=$${vals.length} RETURNING *`, vals
+  );
+  if (!rows.length) throw Object.assign(new Error('Staff member not found'), { statusCode: 404 });
+  return rows[0];
+}
+
+async function removeStaff(clinicId, staffId) {
+  const { rowCount } = await db.query(
+    'DELETE FROM clinic_staff WHERE id=$1 AND clinic_id=$2', [staffId, clinicId]
+  );
+  if (!rowCount) throw Object.assign(new Error('Staff member not found'), { statusCode: 404 });
+}
+
+// ── Availability ──────────────────────────────────────────────────────────────
+
+async function getAvailability(staffId) {
+  const { rows } = await db.query(
+    'SELECT * FROM staff_availability WHERE staff_id=$1 ORDER BY day_of_week ASC', [staffId]
+  );
   return rows;
 }
 
-async function createResource(clinicId, { name, type, description, capacity }) {
+async function setAvailability(staffId, slots) {
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('DELETE FROM staff_availability WHERE staff_id=$1', [staffId]);
+    for (const s of slots) {
+      await client.query(
+        `INSERT INTO staff_availability (staff_id, day_of_week, start_time, end_time, is_active)
+         VALUES ($1,$2,$3,$4,$5)`,
+        [staffId, s.dayOfWeek, s.startTime, s.endTime, s.isActive !== false]
+      );
+    }
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+  return getAvailability(staffId);
+}
+
+// ── Equipment ─────────────────────────────────────────────────────────────────
+
+async function listEquipment(clinicId) {
+  const { rows } = await db.query(
+    'SELECT * FROM equipment WHERE clinic_id=$1 AND is_active=true ORDER BY name ASC', [clinicId]
+  );
+  return rows;
+}
+
+async function addEquipment(clinicId, { name, quantity, isPortable }) {
   const id = uuidv4();
   const { rows } = await db.query(
-    'INSERT INTO resources (id, clinic_id, name, type, description, capacity) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *',
-    [id, clinicId, name, type, description, capacity || 1]
+    'INSERT INTO equipment (id, clinic_id, name, quantity, is_portable) VALUES ($1,$2,$3,$4,$5) RETURNING *',
+    [id, clinicId, name, quantity || 1, isPortable || false]
   );
   return rows[0];
 }
 
-module.exports = { createStaff, listStaff, getTherapistProfile, getAvailability, setWeeklySchedule, blockSlot, listResources, createResource };
+async function updateEquipment(clinicId, equipId, data) {
+  const fields = []; const vals = [];
+  if (data.name       !== undefined) { fields.push(`name=$${fields.length+1}`);        vals.push(data.name); }
+  if (data.quantity   !== undefined) { fields.push(`quantity=$${fields.length+1}`);    vals.push(data.quantity); }
+  if (data.isPortable !== undefined) { fields.push(`is_portable=$${fields.length+1}`); vals.push(data.isPortable); }
+  if (data.isActive   !== undefined) { fields.push(`is_active=$${fields.length+1}`);   vals.push(data.isActive); }
+  fields.push(`updated_at=NOW()`);
+  vals.push(clinicId, equipId);
+  const { rows } = await db.query(
+    `UPDATE equipment SET ${fields.join(',')} WHERE clinic_id=$${vals.length-1} AND id=$${vals.length} RETURNING *`, vals
+  );
+  if (!rows.length) throw Object.assign(new Error('Equipment not found'), { statusCode: 404 });
+  return rows[0];
+}
+
+async function deleteEquipment(clinicId, equipId) {
+  await db.query('UPDATE equipment SET is_active=false, updated_at=NOW() WHERE clinic_id=$1 AND id=$2', [clinicId, equipId]);
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function _generateTempPassword() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789@#';
+  return Array.from({ length: 12 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+}
+
+module.exports = {
+  listStaff, addStaff, updateStaff, removeStaff,
+  getAvailability, setAvailability,
+  listEquipment, addEquipment, updateEquipment, deleteEquipment,
+};

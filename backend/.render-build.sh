@@ -1,17 +1,12 @@
-#!/bin/bash
-# Render Build Script - handles deployment with graceful migration fallback
-
+#!/usr/bin/env bash
 set -e
 
-echo "==> Installing dependencies..."
-npm install
+echo "=== Physiobook API — Render Build ==="
+echo "Node: $(node --version) | npm: $(npm --version)"
 
-echo "==> Attempting migrations..."
-if npm run migrate; then
-  echo "✅  Migrations completed successfully"
-else
-  echo "⚠️  Migrations failed - starting server without database schema"
-  echo "   The server will still start but API endpoints may fail until migrations are manually run"
-fi
+npm install --omit=dev
 
-echo "==> Build complete!"
+echo "--- Running database migrations ---"
+node migrations/run.js
+
+echo "=== Build complete ==="

@@ -1,69 +1,60 @@
 'use strict';
 
-const staffService = require('../services/staff.service');
-const R            = require('../utils/response');
-
-async function createStaff(req, res, next) {
-  try {
-    const clinicId = req.user.role === 'super_admin' ? req.body.clinicId : req.user.clinicId;
-    const result   = await staffService.createStaff({ ...req.body, clinicId });
-    return R.created(res, { message: 'Staff member created. A welcome email with login details has been sent.', userId: result.userId });
-  } catch (err) { next(err); }
-}
+const svc = require('../services/staff.service');
+const R   = require('../utils/response');
 
 async function listStaff(req, res, next) {
-  try {
-    const clinicId = req.user.role === 'super_admin' ? req.query.clinicId : req.user.clinicId;
-    const { page, limit, role } = req.query;
-    const result = await staffService.listStaff({ clinicId, role, page, limit });
-    return R.paginated(res, result.rows, { page: page || 1, limit: limit || 20, total: result.total });
-  } catch (err) { next(err); }
+  try { return R.success(res, await svc.listStaff(req.params.clinicId)); }
+  catch (err) { next(err); }
 }
 
-async function getTherapistProfile(req, res, next) {
-  try {
-    const profile = await staffService.getTherapistProfile(req.params.therapistId);
-    return R.success(res, profile);
-  } catch (err) { next(err); }
+async function addStaff(req, res, next) {
+  try { return R.created(res, await svc.addStaff(req.params.clinicId, req.body)); }
+  catch (err) { next(err); }
+}
+
+async function updateStaff(req, res, next) {
+  try { return R.success(res, await svc.updateStaff(req.params.clinicId, req.params.sid, req.body)); }
+  catch (err) { next(err); }
+}
+
+async function removeStaff(req, res, next) {
+  try { await svc.removeStaff(req.params.clinicId, req.params.sid); return R.noContent(res); }
+  catch (err) { next(err); }
 }
 
 async function getAvailability(req, res, next) {
-  try {
-    const slots = await staffService.getAvailability(req.params.therapistId, req.query.date);
-    return R.success(res, slots);
-  } catch (err) { next(err); }
+  try { return R.success(res, await svc.getAvailability(req.params.sid)); }
+  catch (err) { next(err); }
 }
 
-async function setWeeklySchedule(req, res, next) {
-  try {
-    const therapistId = req.params.therapistId || req.user.id;
-    await staffService.setWeeklySchedule(therapistId, req.body.schedule);
-    return R.success(res, { message: 'Weekly schedule updated' });
-  } catch (err) { next(err); }
+async function setAvailability(req, res, next) {
+  try { return R.success(res, await svc.setAvailability(req.params.sid, req.body.availability)); }
+  catch (err) { next(err); }
 }
 
-async function blockSlot(req, res, next) {
-  try {
-    const therapistId = req.params.therapistId || req.user.id;
-    const result = await staffService.blockSlot(therapistId, req.body);
-    return R.created(res, result);
-  } catch (err) { next(err); }
+async function listEquipment(req, res, next) {
+  try { return R.success(res, await svc.listEquipment(req.params.clinicId)); }
+  catch (err) { next(err); }
 }
 
-async function listResources(req, res, next) {
-  try {
-    const clinicId = req.user.clinicId || req.query.clinicId;
-    const resources = await staffService.listResources(clinicId);
-    return R.success(res, resources);
-  } catch (err) { next(err); }
+async function addEquipment(req, res, next) {
+  try { return R.created(res, await svc.addEquipment(req.params.clinicId, req.body)); }
+  catch (err) { next(err); }
 }
 
-async function createResource(req, res, next) {
-  try {
-    const clinicId = req.user.clinicId || req.body.clinicId;
-    const resource = await staffService.createResource(clinicId, req.body);
-    return R.created(res, resource);
-  } catch (err) { next(err); }
+async function updateEquipment(req, res, next) {
+  try { return R.success(res, await svc.updateEquipment(req.params.clinicId, req.params.eid, req.body)); }
+  catch (err) { next(err); }
 }
 
-module.exports = { createStaff, listStaff, getTherapistProfile, getAvailability, setWeeklySchedule, blockSlot, listResources, createResource };
+async function deleteEquipment(req, res, next) {
+  try { await svc.deleteEquipment(req.params.clinicId, req.params.eid); return R.noContent(res); }
+  catch (err) { next(err); }
+}
+
+module.exports = {
+  listStaff, addStaff, updateStaff, removeStaff,
+  getAvailability, setAvailability,
+  listEquipment, addEquipment, updateEquipment, deleteEquipment,
+};

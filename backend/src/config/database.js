@@ -18,15 +18,10 @@ async function connectDB() {
   while (attempts < maxAttempts) {
     try {
       pool = new Pool({
-        host:     config.db.host,
-        port:     config.db.port,
-        database: config.db.database,
-        user:     config.db.user,
-        password: config.db.password,
-        ssl:      config.db.ssl,
-        min:      config.db.pool.min,
-        max:      config.db.pool.max,
-        idleTimeoutMillis:    30000,
+        connectionString: config.db.url,
+        ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+        max: 20,
+        idleTimeoutMillis:       30000,
         connectionTimeoutMillis: 10000,
       });
 
@@ -106,4 +101,15 @@ async function withTransaction(fn) {
   }
 }
 
-module.exports = { connectDB, query, getClient, withTransaction };
+async function connect() {
+  if (!pool) await connectDB();
+  return pool.connect();
+}
+
+async function end() {
+  if (pool) await pool.end();
+}
+
+module.exports = { connectDB, query, connect, getClient, withTransaction, end,
+  // Expose pool getter for health check
+  get pool() { return pool; } };

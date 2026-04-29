@@ -1,68 +1,65 @@
 'use strict';
 
 const jwt    = require('jsonwebtoken');
-const config = require('../config/index');
+const config = require('../config');
+
+const { privateKey, publicKey, algorithm, accessExpires, refreshExpires, otpExpires } = config.jwt;
 
 /**
- * Generate an access token (short-lived).
+ * Sign an access token (15 min, RS256 or HS256).
  */
 function generateAccessToken(payload) {
-  return jwt.sign(payload, config.jwt.accessSecret, {
-    expiresIn:  config.jwt.accessExpiresIn,
-    issuer:     'physiobook-api',
-    audience:   'physiobook-client',
-  });
+  return jwt.sign(payload, privateKey, { algorithm, expiresIn: accessExpires });
 }
 
 /**
- * Generate a refresh token (long-lived).
+ * Sign a refresh token (7 days).
  */
 function generateRefreshToken(payload) {
-  return jwt.sign(payload, config.jwt.refreshSecret, {
-    expiresIn:  config.jwt.refreshExpiresIn,
-    issuer:     'physiobook-api',
-    audience:   'physiobook-client',
-  });
+  return jwt.sign(payload, privateKey, { algorithm, expiresIn: refreshExpires });
 }
 
 /**
- * Verify an access token. Returns the decoded payload or throws.
+ * Sign a short-lived OTP / action token (verify-email, 2fa-pending, reset-password).
+ */
+function generateOtpToken(payload, expiresIn) {
+  return jwt.sign(payload, privateKey, { algorithm, expiresIn: expiresIn || otpExpires });
+}
+
+/**
+ * Verify an access token. Throws JsonWebTokenError / TokenExpiredError on failure.
  */
 function verifyAccessToken(token) {
-  return jwt.verify(token, config.jwt.accessSecret, {
-    issuer:   'physiobook-api',
-    audience: 'physiobook-client',
-  });
+  return jwt.verify(token, publicKey, { algorithms: [algorithm] });
 }
 
 /**
  * Verify a refresh token.
  */
 function verifyRefreshToken(token) {
-  return jwt.verify(token, config.jwt.refreshSecret, {
-    issuer:   'physiobook-api',
-    audience: 'physiobook-client',
-  });
+  return jwt.verify(token, publicKey, { algorithms: [algorithm] });
 }
 
 /**
- * Generate a one-time signed token for email verification / password reset.
- * @param {object} payload - data to encode
- * @param {string} expiresIn - e.g. '1h', '24h'
+ * Verify an OTP / action token.
  */
-function generateOtpToken(payload, expiresIn = '1h') {
-  return jwt.sign(payload, config.jwt.accessSecret, { expiresIn });
+function verifyOtpToken(token) {
+  return jwt.verify(token, publicKey, { algorithms: [algorithm] });
 }
 
-function verifyOtpToken(token) {
-  return jwt.verify(token, config.jwt.accessSecret);
+/**
+ * Decode without verification (for logging/debugging only).
+ */
+function decode(token) {
+  return jwt.decode(token);
 }
 
 module.exports = {
   generateAccessToken,
   generateRefreshToken,
+  generateOtpToken,
   verifyAccessToken,
   verifyRefreshToken,
-  generateOtpToken,
   verifyOtpToken,
+  decode,
 };

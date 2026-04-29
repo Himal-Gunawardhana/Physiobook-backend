@@ -3,53 +3,58 @@
 const R = require('../utils/response');
 
 /**
- * Role-Based Access Control middleware factory.
- *
- * Roles hierarchy:
- *   super_admin > clinic_admin > receptionist | therapist > patient
- *
- * Usage:
- *   router.get('/admin/dashboard', authenticate, authorize('super_admin'), handler)
- *   router.get('/appointments', authenticate, authorize('receptionist', 'therapist', 'clinic_admin'), handler)
+ * Role-based access guard factory.
+ * Usage: authorize('super_admin', 'clinic_admin')
  */
 function authorize(...allowedRoles) {
   return (req, res, next) => {
-    if (!req.user) {
-      return R.unauthorised(res);
-    }
+    if (!req.user) return R.unauthorised(res, 'Authentication required');
     if (!allowedRoles.includes(req.user.role)) {
-      return R.forbidden(res, `Role '${req.user.role}' is not permitted to access this resource`);
+      return R.forbidden(res, `Access denied. Requires role: ${allowedRoles.join(' | ')}`);
     }
     next();
   };
 }
 
 /**
- * Scope guard — ensures the requesting user operates within their own clinic.
- * Attach after authenticate. Uses req.user.clinicId from JWT payload.
- *
- * Does NOT apply to super_admin (they bypass all clinic scoping).
+ * Clinic scope guard — ensures clinic_admin can only access their own clinic.
+ * Checks req.params.id or req.params.clinicId against req.user.clinicId.
+ * Super admins bypass this check.
  */
 function scopeToClinic(req, res, next) {
   if (!req.user) return R.unauthorised(res);
-  if (req.user.role === 'super_admin') return next(); // super_admin is global
+  if (req.user.role === 'super_admin') return next();
 
-  const routeClinicId = req.params.clinicId || req.body.clinicId;
-  if (routeClinicId && routeClinicId !== req.user.clinicId) {
-    return R.forbidden(res, 'You do not have access to this clinic');
+  const paramId = req.params.clinicId || req.params.id;
+  if (paramId && req.user.clinicId && paramId !== req.user.clinicId) {
+    return R.forbidden(res, 'Access restricted to your own clinic');
   }
   next();
 }
 
 /**
- * Self-or-admin guard — a user can access their own resource, or an admin can access any.
+ * Self-or-admin guard — user can access their own resource or admin can access any.
  */
 function selfOrAdmin(req, res, next) {
   if (!req.user) return R.unauthorised(res);
-  const isAdmin = ['super_admin', 'clinic_admin'].includes(req.user.role);
-  const isSelf  = req.params.id === req.user.id;
-  if (!isAdmin && !isSelf) return R.forbidden(res);
+  const targetId = req.params.id || req.params.userId;
+  if (req.user.role === 'super_admin' || req.user.role === 'clinic_admin') return next();
+  if (targetId && targetId !== req.user.id) {
+    return R.forbidden(res, 'Access denied');
+  }
   next();
 }
 
-module.exports = { authorize, scopeToClinic, selfOrAdmin };
+/**
+ * Therapist-or-admin guard — therapist can only access their own data.
+ */
+function therapistOrAdmin(req, res, next) {
+  if (!req.user) return R.unauthorised(res);
+  if (['super_admin', 'clinic_admin'].includes(req.user.role)) return next();
+  // For therapist, the request body/param staffId must match their own clinicStaffId
+  // This is enforced at the service level for fine-grained checks
+  if (req.user.role === 'therapist') return next();
+  return R.forbidden(res, 'Access denied');
+}
+
+module.exports = { authorize, scopeToClinic, selfOrAdmin, therapistOrAdmin };

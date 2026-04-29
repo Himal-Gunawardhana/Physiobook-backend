@@ -3,93 +3,47 @@
 const logger = require('../utils/logger');
 
 /**
- * Global error handler — must be the last middleware registered in app.js.
- * Standardizes all error responses to match frontend expectations:
- * {
- *   success: false,
- *   error: "ERROR_CODE",
- *   message: "User-friendly message"
- * }
+ * Global error handler middleware.
+ * Maps known error shapes to the standard response envelope:
+ *   { success: false, error: { code, message, details? } }
  */
 // eslint-disable-next-line no-unused-vars
 function errorHandler(err, req, res, next) {
-  logger.error(`${err.name}: ${err.message}`, { stack: err.stack, path: req.path });
+  // Already responded
+  if (res.headersSent) return;
 
-  // Express-validator validation errors
-  if (err.name === 'ValidationError') {
-    return res.status(422).json({
-      success: false,
-      error: 'VALIDATION_ERROR',
-      message: 'Request validation failed',
-      details: err.errors
-    });
-  }
-
-  // PostgreSQL unique violation (duplicate key)
-  if (err.code === '23505') {
-    return res.status(409).json({
-      success: false,
-      error: 'DUPLICATE_RESOURCE',
-      message: 'A record with this value already exists (e.g., email already registered)'
-    });
-  }
-
-  // PostgreSQL foreign-key violation
-  if (err.code === '23503') {
-    return res.status(400).json({
-      success: false,
-      error: 'INVALID_REFERENCE',
-      message: 'Referenced resource does not exist'
-    });
-  }
-
-  // Stripe errors
-  if (err.type && err.type.startsWith('Stripe')) {
-    return res.status(402).json({
-      success: false,
-      error: 'PAYMENT_ERROR',
-      message: err.message || 'Payment processing failed'
-    });
-  }
-
-  // JWT errors
-  if (err.name === 'JsonWebTokenError' || err.name === 'TokenExpiredError') {
-    return res.status(401).json({
-      success: false,
-      error: 'AUTH_ERROR',
-      message: 'Invalid or expired authentication token. Please login again.'
-    });
-  }
-
-  // Multer file size errors
-  if (err.code === 'LIMIT_FILE_SIZE') {
-    return res.status(413).json({
-      success: false,
-      error: 'FILE_TOO_LARGE',
-      message: 'Uploaded file exceeds maximum size limit (5MB)'
-    });
-  }
-
-  // CORS errors
-  if (err.message && err.message.includes('CORS')) {
-    return res.status(403).json({
-      success: false,
-      error: 'CORS_ERROR',
-      message: 'Your origin is not allowed to access this resource'
-    });
-  }
-
-  // Default error response
   const statusCode = err.statusCode || err.status || 500;
-  const message = statusCode < 500
-    ? (err.message || 'An error occurred')
-    : 'An unexpected error occurred. Please try again later.';
+  const code       = err.code || _codeFromStatus(statusCode);
+  const message    = err.message || 'An unexpected error occurred';
+  const details    = err.details || undefined;
+
+  // Don't log 4xx noise in detail, but do log 5xx
+  if (statusCode >= 500) {
+    logger.error({ err, req: { method: req.method, url: req.originalUrl, ip: req.ip } }, 'Internal server error');
+  } else {
+    logger.warn({ code, message, url: req.originalUrl }, 'Request error');
+  }
 
   return res.status(statusCode).json({
     success: false,
-    error: err.code || 'INTERNAL_ERROR',
-    message: message
+    error: { code, message, ...(details && { details }) },
   });
+}
+
+function _codeFromStatus(status) {
+  const map = {
+    400: 'BAD_REQUEST',
+    401: 'UNAUTHORIZED',
+    403: 'FORBIDDEN',
+    404: 'NOT_FOUND',
+    409: 'CONFLICT',
+    422: 'VALIDATION_ERROR',
+    429: 'RATE_LIMIT_EXCEEDED',
+    500: 'INTERNAL_SERVER_ERROR',
+    502: 'BAD_GATEWAY',
+    503: 'SERVICE_UNAVAILABLE',
+  };
+  return map[status] || 'ERROR';
 }
 
 module.exports = errorHandler;

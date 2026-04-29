@@ -1,81 +1,87 @@
 'use strict';
 
 const { Router } = require('express');
-const { body, param } = require('express-validator');
-const ctrl     = require('../controllers/clinic.controller');
-const validate = require('../middleware/validate');
-const { authenticate }      = require('../middleware/auth');
-const { authorize, scopeToClinic } = require('../middleware/rbac');
+const ctrl       = require('../controllers/clinic.controller');
+const staffCtrl  = require('../controllers/staff.controller');
+const { authenticate, optionalAuth } = require('../middleware/auth');
+const { authorize, scopeToClinic }   = require('../middleware/rbac');
 
 const router = Router();
-router.use(authenticate);
 
-// GET  /clinics  (public-ish — any authenticated user can browse)
-router.get('/', ctrl.listClinics);
+// ── Clinics ────────────────────────────────────────────────────────────────
 
-// POST /clinics  (super_admin only)
-router.post('/',
-  authorize('super_admin'),
-  body('name').trim().notEmpty(),
-  body('addressLine1').trim().notEmpty(),
-  body('city').trim().notEmpty(),
-  body('country').trim().notEmpty(),
-  body('phone').isString().trim().notEmpty(),
-  body('email').isEmail().normalizeEmail(),
-  validate, ctrl.createClinic
-);
+// GET  /clinics  (public)
+router.get('/', optionalAuth, ctrl.listClinics);
 
-// GET  /clinics/:clinicId
-router.get('/:clinicId',
-  param('clinicId').isUUID(),
-  validate, ctrl.getClinic
-);
+// POST /clinics  [super_admin]
+router.post('/', authenticate, authorize('super_admin'), ctrl.createClinic);
 
-// PUT  /clinics/:clinicId
-router.put('/:clinicId',
-  authorize('super_admin', 'clinic_admin'),
-  param('clinicId').isUUID(),
-  validate, scopeToClinic, ctrl.updateClinic
-);
+// GET  /clinics/:id  (public)
+router.get('/:id', optionalAuth, ctrl.getClinic);
 
-// ── Operating hours ────────────────────────────────────────────────────────
-// GET  /clinics/:clinicId/hours
-router.get('/:clinicId/hours',
-  param('clinicId').isUUID(),
-  validate, ctrl.getOperatingHours
-);
+// PUT  /clinics/:id  [clinic_admin or super_admin]
+router.put('/:id', authenticate, authorize('clinic_admin', 'super_admin'), scopeToClinic, ctrl.updateClinic);
 
-// PUT  /clinics/:clinicId/hours
-router.put('/:clinicId/hours',
-  authorize('super_admin', 'clinic_admin'),
-  param('clinicId').isUUID(),
-  body('hours').isArray({ min: 1 }),
-  validate, scopeToClinic, ctrl.setOperatingHours
-);
+// GET  /clinics/:id/portal-config  [clinic_admin]
+router.get('/:id/portal-config', authenticate, authorize('clinic_admin', 'super_admin'), scopeToClinic, ctrl.getPortalConfig);
 
-// ── Services (treatment catalogue) ────────────────────────────────────────
-// GET  /clinics/:clinicId/services
-router.get('/:clinicId/services',
-  param('clinicId').isUUID(),
-  validate, ctrl.getServices
-);
+// PUT  /clinics/:id/portal-config  [clinic_admin]
+router.put('/:id/portal-config', authenticate, authorize('clinic_admin', 'super_admin'), scopeToClinic, ctrl.updatePortalConfig);
 
-// POST /clinics/:clinicId/services
-router.post('/:clinicId/services',
-  authorize('super_admin', 'clinic_admin'),
-  param('clinicId').isUUID(),
-  body('name').trim().notEmpty(),
-  body('durationMinutes').isInt({ min: 5 }),
-  body('price').isFloat({ min: 0 }),
-  validate, scopeToClinic, ctrl.addService
-);
+// ── Services ──────────────────────────────────────────────────────────────
 
-// PUT  /clinics/:clinicId/services/:serviceId
-router.put('/:clinicId/services/:serviceId',
-  authorize('super_admin', 'clinic_admin'),
-  param('clinicId').isUUID(),
-  param('serviceId').isUUID(),
-  validate, scopeToClinic, ctrl.updateService
-);
+// GET  /clinics/:id/services  (public)
+router.get('/:id/services', optionalAuth, ctrl.listServices);
+
+// POST /clinics/:id/services  [clinic_admin]
+router.post('/:id/services', authenticate, authorize('clinic_admin', 'super_admin'), scopeToClinic, ctrl.createService);
+
+// PUT  /clinics/:id/services/:sid  [clinic_admin]
+router.put('/:id/services/:sid', authenticate, authorize('clinic_admin', 'super_admin'), scopeToClinic, ctrl.updateService);
+
+// DELETE /clinics/:id/services/:sid  [clinic_admin]
+router.delete('/:id/services/:sid', authenticate, authorize('clinic_admin', 'super_admin'), scopeToClinic, ctrl.deleteService);
+
+// ── Packages ──────────────────────────────────────────────────────────────
+
+// GET  /clinics/:id/packages  (public)
+router.get('/:id/packages', optionalAuth, ctrl.listPackages);
+
+// POST /clinics/:id/packages  [clinic_admin]
+router.post('/:id/packages', authenticate, authorize('clinic_admin', 'super_admin'), scopeToClinic, ctrl.createPackage);
+
+// PUT  /clinics/:id/packages/:pid  [clinic_admin]
+router.put('/:id/packages/:pid', authenticate, authorize('clinic_admin', 'super_admin'), scopeToClinic, ctrl.updatePackage);
+
+// DELETE /clinics/:id/packages/:pid  [clinic_admin]
+router.delete('/:id/packages/:pid', authenticate, authorize('clinic_admin', 'super_admin'), scopeToClinic, ctrl.deletePackage);
+
+// ── Staff (under clinic) ──────────────────────────────────────────────────
+
+// GET    /clinics/:clinicId/staff  [clinic_admin]
+router.get('/:clinicId/staff', authenticate, authorize('clinic_admin', 'super_admin'), staffCtrl.listStaff);
+
+// POST   /clinics/:clinicId/staff  [clinic_admin]
+router.post('/:clinicId/staff', authenticate, authorize('clinic_admin', 'super_admin'), scopeToClinic, staffCtrl.addStaff);
+
+// PUT    /clinics/:clinicId/staff/:sid  [clinic_admin]
+router.put('/:clinicId/staff/:sid', authenticate, authorize('clinic_admin', 'super_admin'), scopeToClinic, staffCtrl.updateStaff);
+
+// DELETE /clinics/:clinicId/staff/:sid  [clinic_admin]
+router.delete('/:clinicId/staff/:sid', authenticate, authorize('clinic_admin', 'super_admin'), scopeToClinic, staffCtrl.removeStaff);
+
+// ── Equipment ─────────────────────────────────────────────────────────────
+
+// GET    /clinics/:clinicId/equipment  [clinic_admin]
+router.get('/:clinicId/equipment', authenticate, authorize('clinic_admin', 'super_admin'), staffCtrl.listEquipment);
+
+// POST   /clinics/:clinicId/equipment  [clinic_admin]
+router.post('/:clinicId/equipment', authenticate, authorize('clinic_admin', 'super_admin'), scopeToClinic, staffCtrl.addEquipment);
+
+// PUT    /clinics/:clinicId/equipment/:eid  [clinic_admin]
+router.put('/:clinicId/equipment/:eid', authenticate, authorize('clinic_admin', 'super_admin'), scopeToClinic, staffCtrl.updateEquipment);
+
+// DELETE /clinics/:clinicId/equipment/:eid  [clinic_admin]
+router.delete('/:clinicId/equipment/:eid', authenticate, authorize('clinic_admin', 'super_admin'), scopeToClinic, staffCtrl.deleteEquipment);
 
 module.exports = router;

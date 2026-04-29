@@ -5,88 +5,104 @@ const helmet       = require('helmet');
 const cors         = require('cors');
 const compression  = require('compression');
 const cookieParser = require('cookie-parser');
-const morgan       = require('morgan');
+const pinoHttp     = require('pino-http');
+const config       = require('./config');
 const logger       = require('./utils/logger');
 const routes       = require('./routes');
 const errorHandler = require('./middleware/errorHandler');
 
 const app = express();
 
-// ── Security headers ─────────────────────────────────────────
-app.use(helmet());
+// ── Security headers ──────────────────────────────────────────────────────
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
+}));
 
-// ── CORS ─────────────────────────────────────────────────────
-// Build list of allowed origins from environment or use defaults for development
-const defaultOrigins = [
-  'http://localhost:5173',      // Vite dev server (main)
-  'http://localhost:3000',      // Alternative local dev
-  'http://localhost:5174',      // Vite alternative port
-  'http://127.0.0.1:5173',      // Localhost alternative
-];
-
-const envOrigins = (process.env.CORS_ORIGINS || '').split(',')
-  .map(o => o.trim())
-  .filter(o => o.length > 0);
-
-const allowedOrigins = envOrigins.length > 0 ? envOrigins : defaultOrigins;
-
-logger.info(`🌐 CORS enabled for ${allowedOrigins.length} origin(s):`);
-allowedOrigins.forEach(origin => logger.info(`   - ${origin}`));
+// ── CORS ──────────────────────────────────────────────────────────────────
+const allowedOrigins = config.cors.origins;
+logger.info({ origins: allowedOrigins }, '🌐 CORS origins configured');
 
 app.use(cors({
   origin: (origin, cb) => {
-    // Allow requests with no origin (like mobile apps, curl, Postman, etc)
-    // This is safe because we have authentication middleware
-    if (!origin) return cb(null, true);
-    
-    // Allow if origin is in whitelist
-    if (allowedOrigins.includes(origin)) {
-      return cb(null, true);
-    }
-    
-    // Reject if origin not in whitelist
-    const errorMsg = `CORS policy violation: origin '${origin}' not allowed`;
-    logger.warn(`⚠️  ${errorMsg}`);
-    cb(new Error(errorMsg));
+    if (!origin) return cb(null, true); // Allow non-browser clients
+    if (allowedOrigins.includes(origin)) return cb(null, true);
+    // Allow any *.vercel.app subdomain
+    if (/^https:\/\/[a-zA-Z0-9-]+\.vercel\.app$/.test(origin)) return cb(null, true);
+    logger.warn({ origin }, '⚠️ CORS blocked');
+    cb(new Error(`CORS blocked: ${origin}`));
   },
-  credentials: true,  // Allow cookies and Authorization headers
+  credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Refresh-Token'],
-  maxAge: 86400,  // 24 hours - cache preflight requests
+  maxAge: 86400,
 }));
 
-// ── Body parsing ──────────────────────────────────────────────
-// Raw body needed for Stripe webhook signature verification
+// ── Raw body for Stripe webhook MUST be before json() ────────────────────
 app.use('/api/v1/payments/webhook', express.raw({ type: 'application/json' }));
-app.use(express.json({ limit: '5mb' }));
-app.use(express.urlencoded({ extended: true }));
-app.use(cookieParser());
 
-// ── Compression ───────────────────────────────────────────────
+// ── Body parsing ──────────────────────────────────────────────────────────
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(cookieParser());
 app.use(compression());
 
-// ── HTTP request logging ──────────────────────────────────────
-const stream = { write: (msg) => logger.http(msg.trim()) };
-app.use(morgan('combined', { stream }));
+// ── Request logging (pino-http) ───────────────────────────────────────────
+app.use(pinoHttp({
+  logger,
+  customLogLevel: (req, res, err) => {
+    if (err || res.statusCode >= 500) return 'error';
+    if (res.statusCode >= 400) return 'warn';
+    return 'info';
+  },
+  serializers: {
+    req: (req) => ({ method: req.method, url: req.url, id: req.id }),
+    res: (res) => ({ statusCode: res.statusCode }),
+  },
+}));
 
-// ── Health check (no auth needed) ────────────────────────────
-app.get('/health', (req, res) => {
-  res.json({ status: 'ok', service: 'physiobook-api', version: '1.0.0', timestamp: new Date().toISOString() });
-});
+// ── Health check ──────────────────────────────────────────────────────────
+app.get('/health', async (req, res) => {
+  let dbStatus  = 'disconnected';
+  let redisStatus = 'disconnected';
 
-// ── API routes ────────────────────────────────────────────────
-app.use(`/api/${process.env.API_VERSION || 'v1'}`, routes);
+  try {
+    const db = require('./config/database');
+    await db.query('SELECT 1');
+    dbStatus = 'connected';
+  } catch (_) {}
 
-// ── 404 handler ───────────────────────────────────────────────
-app.use((req, res) => {
-  res.status(404).json({
-    success: false,
-    error: 'NOT_FOUND',
-    message: `Route ${req.method} ${req.originalUrl} not found`
+  try {
+    const redis = require('./config/redis');
+    await redis.ping();
+    redisStatus = 'connected';
+  } catch (_) {}
+
+  const status = dbStatus === 'connected' && redisStatus === 'connected' ? 'ok' : 'degraded';
+  return res.status(status === 'ok' ? 200 : 503).json({
+    success: true,
+    data: {
+      status,
+      timestamp: new Date().toISOString(),
+      uptime:    Math.floor(process.uptime()),
+      version:   '2.0.0',
+      db:        dbStatus,
+      redis:     redisStatus,
+    },
   });
 });
 
-// ── Global error handler ──────────────────────────────────────
+// ── API routes ────────────────────────────────────────────────────────────
+app.use(`/api/${config.api.version}`, routes);
+
+// ── 404 ───────────────────────────────────────────────────────────────────
+app.use((req, res) => {
+  res.status(404).json({
+    success: false,
+    error: { code: 'NOT_FOUND', message: `Route ${req.method} ${req.originalUrl} not found` },
+  });
+});
+
+// ── Global error handler ──────────────────────────────────────────────────
 app.use(errorHandler);
 
 module.exports = app;

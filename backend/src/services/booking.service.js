@@ -2,207 +2,329 @@
 
 const { v4: uuidv4 } = require('uuid');
 const db = require('../config/database');
-const notificationService = require('./notification.service');
+const { autoAssignTherapist }  = require('../utils/autoAssign');
+const { sendBookingConfirmation, sendBookingCreatedNotification, sendFeedbackPrompt } = require('../utils/sendEmail');
 
-const VALID_STATUSES = ['pending', 'confirmed', 'cancelled', 'completed', 'no_show'];
+const BUFFER_MINS = 15;
 
 /**
- * Create a new booking/appointment.
+ * Generate PB-YYYY-NNNN reference.
  */
-async function createBooking({ patientId, clinicId, therapistId, serviceId, resourceId, appointmentDate, startTime, endTime, notes }) {
-  // Check for therapist conflicts
-  const conflict = await db.query(
-    `SELECT id FROM appointments
-     WHERE therapist_id=$1 AND appointment_date=$2
-       AND status NOT IN ('cancelled','no_show')
-       AND (start_time, end_time) OVERLAPS ($3::time, $4::time)`,
-    [therapistId, appointmentDate, startTime, endTime]
-  );
-  if (conflict.rows.length) throw Object.assign(new Error('Therapist is not available for the selected time'), { statusCode: 409 });
-
-  const id = uuidv4();
-  const bookingRef = `PB-${Date.now().toString(36).toUpperCase()}`;
-
-  const { rows } = await db.query(
-    `INSERT INTO appointments
-       (id, booking_ref, patient_id, clinic_id, therapist_id, service_id, resource_id,
-        appointment_date, start_time, end_time, notes, status)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'pending')
-     RETURNING *`,
-    [id, bookingRef, patientId, clinicId, therapistId, serviceId, resourceId || null, appointmentDate, startTime, endTime, notes]
-  );
-  const booking = rows[0];
-
-  // PLACEHOLDER: Send confirmation notification
-  await notificationService.sendBookingConfirmation(patientId, booking);
-
-  return booking;
+async function _generateReference() {
+  const year = new Date().getFullYear();
+  const { rows } = await db.query(`SELECT nextval('booking_seq') AS seq`);
+  const seq = String(rows[0].seq).padStart(4, '0');
+  return `PB-${year}-${seq}`;
 }
 
-/**
- * Get booking by ID (with full details via JOIN).
- */
+async function createBooking(data) {
+  const {
+    patientId, clinicId, serviceId, packageId, visitMode,
+    bookedDate, bookedTime, therapistId, payNow, notes,
+    patientConfirmedEquipment,
+  } = data;
+
+  // Fetch service duration
+  const { rows: svcRows } = await db.query(
+    'SELECT duration_minutes FROM services WHERE id=$1 AND clinic_id=$2 AND is_active=true', [serviceId, clinicId]
+  );
+  if (!svcRows.length) throw Object.assign(new Error('Service not found or inactive'), { statusCode: 404 });
+  const duration = svcRows[0].duration_minutes;
+
+  // Auto-assign if no therapist specified
+  let assignedStaffId = therapistId || null;
+  let assignedTherapist = null;
+  if (!assignedStaffId) {
+    assignedTherapist = await autoAssignTherapist({ clinicId, bookedDate, bookedTime, durationMinutes: duration });
+    if (!assignedTherapist) throw Object.assign(new Error('No available therapist found for the requested slot'), { statusCode: 409 });
+    assignedStaffId = assignedTherapist.id;
+  } else {
+    // Verify supplied therapist has no conflict
+    const { rows: conflict } = await db.query(
+      `SELECT id FROM bookings
+       WHERE therapist_id=$1 AND booked_date=$2 AND status NOT IN ('cancelled','refund_requested')
+       AND booked_time < ($3::time + ($4 || ' minutes')::interval)
+       AND (booked_time + (duration_minutes || ' minutes')::interval) > ($3::time - ($5 || ' minutes')::interval)`,
+      [assignedStaffId, bookedDate, bookedTime, duration, BUFFER_MINS]
+    );
+    if (conflict.length) throw Object.assign(new Error('Therapist is not available for the selected time'), { statusCode: 409 });
+  }
+
+  const reference = await _generateReference();
+  const id = uuidv4();
+
+  const { rows } = await db.query(
+    `INSERT INTO bookings
+       (id, reference, clinic_id, patient_id, therapist_id, service_id, package_id,
+        visit_mode, booked_date, booked_time, duration_minutes, notes,
+        patient_confirmed_equipment, status, payment_status)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'pending','unpaid') RETURNING *`,
+    [id, reference, clinicId, patientId, assignedStaffId, serviceId, packageId || null,
+     visitMode || 'clinic', bookedDate, bookedTime, duration, notes || null,
+     patientConfirmedEquipment || false]
+  );
+
+  const booking = rows[0];
+
+  // Fire-and-forget notifications
+  _notifyBookingCreated(booking).catch(() => {});
+
+  return { ...booking, assignedTherapist };
+}
+
 async function getBookingById(id) {
   const { rows } = await db.query(
-    `SELECT a.*,
-            p.first_name  || ' ' || p.last_name  AS patient_name,  p.email AS patient_email, p.phone AS patient_phone,
-            t.first_name  || ' ' || t.last_name  AS therapist_name,
-            cs.name AS service_name, cs.duration_minutes, cs.price,
-            c.name AS clinic_name
-     FROM appointments a
-     JOIN users p  ON p.id  = a.patient_id
-     JOIN users t  ON t.id  = a.therapist_id
-     JOIN clinic_services cs ON cs.id = a.service_id
-     JOIN clinics c ON c.id = a.clinic_id
-     WHERE a.id=$1`,
+    `SELECT b.*,
+            u.first_name  || ' ' || u.last_name  AS patient_name,
+            u.email  AS patient_email, u.phone AS patient_phone,
+            tu.first_name || ' ' || tu.last_name AS therapist_name,
+            s.name AS service_name, s.price, s.currency,
+            c.name AS clinic_name, c.address AS clinic_address,
+            pk.name AS package_name
+     FROM bookings b
+     JOIN users u ON u.id = b.patient_id
+     LEFT JOIN clinic_staff cs ON cs.id = b.therapist_id
+     LEFT JOIN users tu ON tu.id = cs.user_id
+     JOIN services s ON s.id = b.service_id
+     JOIN clinics c ON c.id = b.clinic_id
+     LEFT JOIN packages pk ON pk.id = b.package_id
+     WHERE b.id = $1`,
     [id]
   );
   if (!rows.length) throw Object.assign(new Error('Booking not found'), { statusCode: 404 });
   return rows[0];
 }
 
-/**
- * List bookings with filters and pagination.
- */
-async function listBookings({ page = 1, limit = 20, clinicId, patientId, therapistId, status, date, dateFrom, dateTo }) {
+async function listBookings({ page = 1, limit = 20, clinicId, patientId, therapistId, status, date } = {}) {
   const offset = (page - 1) * limit;
   const params = [];
-  const conditions = ['1=1'];
+  const conds  = ['1=1'];
 
-  if (clinicId)    { params.push(clinicId);   conditions.push(`a.clinic_id=$${params.length}`); }
-  if (patientId)   { params.push(patientId);  conditions.push(`a.patient_id=$${params.length}`); }
-  if (therapistId) { params.push(therapistId);conditions.push(`a.therapist_id=$${params.length}`); }
-  if (status)      { params.push(status);     conditions.push(`a.status=$${params.length}`); }
-  if (date)        { params.push(date);       conditions.push(`a.appointment_date=$${params.length}`); }
-  if (dateFrom)    { params.push(dateFrom);   conditions.push(`a.appointment_date >= $${params.length}`); }
-  if (dateTo)      { params.push(dateTo);     conditions.push(`a.appointment_date <= $${params.length}`); }
+  if (clinicId)    { params.push(clinicId);    conds.push(`b.clinic_id=$${params.length}`); }
+  if (patientId)   { params.push(patientId);   conds.push(`b.patient_id=$${params.length}`); }
+  if (therapistId) { params.push(therapistId); conds.push(`b.therapist_id=$${params.length}`); }
+  if (status)      { params.push(status);      conds.push(`b.status=$${params.length}`); }
+  if (date)        { params.push(date);        conds.push(`b.booked_date=$${params.length}`); }
 
-  const where = conditions.join(' AND ');
+  const where = conds.join(' AND ');
   params.push(limit, offset);
 
   const { rows } = await db.query(
-    `SELECT a.id, a.booking_ref, a.appointment_date, a.start_time, a.end_time, a.status,
-            p.first_name || ' ' || p.last_name AS patient_name,
-            t.first_name || ' ' || t.last_name AS therapist_name,
-            cs.name AS service_name, cs.price
-     FROM appointments a
-     JOIN users p  ON p.id = a.patient_id
-     JOIN users t  ON t.id = a.therapist_id
-     JOIN clinic_services cs ON cs.id = a.service_id
+    `SELECT b.id, b.reference, b.booked_date, b.booked_time, b.duration_minutes,
+            b.status, b.payment_status, b.visit_mode,
+            u.first_name || ' ' || u.last_name AS patient_name,
+            tu.first_name || ' ' || tu.last_name AS therapist_name,
+            s.name AS service_name, s.price
+     FROM bookings b
+     JOIN users u ON u.id = b.patient_id
+     LEFT JOIN clinic_staff cs ON cs.id = b.therapist_id
+     LEFT JOIN users tu ON tu.id = cs.user_id
+     JOIN services s ON s.id = b.service_id
      WHERE ${where}
-     ORDER BY a.appointment_date DESC, a.start_time DESC
+     ORDER BY b.booked_date DESC, b.booked_time DESC
      LIMIT $${params.length - 1} OFFSET $${params.length}`,
     params
   );
 
-  const cParams = params.slice(0, params.length - 2);
-  const { rows: cr } = await db.query(`SELECT COUNT(*) FROM appointments a WHERE ${where}`, cParams);
+  const cp = params.slice(0, params.length - 2);
+  const { rows: cr } = await db.query(`SELECT COUNT(*) FROM bookings b WHERE ${where}`, cp);
   return { rows, total: parseInt(cr[0].count, 10) };
 }
 
-/**
- * Update booking status.
- */
-async function updateBookingStatus(id, status, updatedById) {
-  if (!VALID_STATUSES.includes(status)) throw Object.assign(new Error(`Invalid status: ${status}`), { statusCode: 400 });
+async function updateBookingStatus(bookingId, newStatus, updatedById) {
+  const VALID = ['confirmed', 'in_progress', 'completed', 'cancelled', 'refund_requested'];
+  if (!VALID.includes(newStatus)) throw Object.assign(new Error(`Invalid status: ${newStatus}`), { statusCode: 400 });
 
-  const { rows } = await db.query(
-    `UPDATE appointments SET status=$1, updated_by=$2, updated_at=NOW() WHERE id=$3 RETURNING *`,
-    [status, updatedById, id]
-  );
-  if (!rows.length) throw Object.assign(new Error('Booking not found'), { statusCode: 404 });
+  const current = await getBookingById(bookingId);
 
-  // Notify patient of status change
-  await notificationService.sendBookingStatusUpdate(rows[0].patient_id, rows[0], status);
-
-  return rows[0];
-}
-
-/**
- * Reschedule a booking.
- */
-async function rescheduleBooking(id, { appointmentDate, startTime, endTime, updatedById }) {
-  const booking = await getBookingById(id);
-  if (['cancelled', 'completed'].includes(booking.status)) {
-    throw Object.assign(new Error('Cannot reschedule a cancelled or completed booking'), { statusCode: 400 });
+  // Enforce status flow
+  const FLOW = {
+    pending:          ['confirmed', 'cancelled'],
+    confirmed:        ['in_progress', 'cancelled', 'refund_requested'],
+    in_progress:      ['completed', 'cancelled'],
+    completed:        ['refund_requested'],
+    cancelled:        [],
+    refund_requested: ['cancelled'],
+  };
+  if (!FLOW[current.status]?.includes(newStatus)) {
+    throw Object.assign(
+      new Error(`Cannot transition booking from '${current.status}' to '${newStatus}'`),
+      { statusCode: 400 }
+    );
   }
 
-  // Check new slot availability
-  const conflict = await db.query(
-    `SELECT id FROM appointments
-     WHERE therapist_id=$1 AND appointment_date=$2 AND id<>$3
-       AND status NOT IN ('cancelled','no_show')
-       AND (start_time, end_time) OVERLAPS ($4::time, $5::time)`,
-    [booking.therapist_id, appointmentDate, id, startTime, endTime]
-  );
-  if (conflict.rows.length) throw Object.assign(new Error('New time slot is not available'), { statusCode: 409 });
-
   const { rows } = await db.query(
-    `UPDATE appointments SET appointment_date=$1, start_time=$2, end_time=$3, status='pending', updated_by=$4, updated_at=NOW()
-     WHERE id=$5 RETURNING *`,
-    [appointmentDate, startTime, endTime, updatedById, id]
+    `UPDATE bookings SET status=$1, updated_at=NOW() WHERE id=$2 RETURNING *`,
+    [newStatus, bookingId]
   );
+
+  // Fire-and-forget notifications
+  if (newStatus === 'confirmed') {
+    _notifyBookingConfirmed(rows[0]).catch(() => {});
+  }
+  if (newStatus === 'completed') {
+    _promptFeedback(rows[0]).catch(() => {});
+  }
+
   return rows[0];
 }
 
-/**
- * Cancel a booking.
- */
-async function cancelBooking(id, { reason, cancelledById }) {
-  const { rows } = await db.query(
-    `UPDATE appointments SET status='cancelled', cancellation_reason=$1, updated_by=$2, updated_at=NOW()
-     WHERE id=$3 RETURNING *`,
-    [reason, cancelledById, id]
-  );
-  if (!rows.length) throw Object.assign(new Error('Booking not found'), { statusCode: 404 });
-  return rows[0];
+async function deleteBooking(bookingId, user) {
+  const booking = await getBookingById(bookingId);
+
+  if (user.role === 'patient') {
+    if (booking.patient_id !== user.id) throw Object.assign(new Error('Access denied'), { statusCode: 403 });
+    if (booking.status !== 'pending') throw Object.assign(new Error('Only pending bookings can be cancelled by patients'), { statusCode: 400 });
+  }
+
+  await db.query(`UPDATE bookings SET status='cancelled', updated_at=NOW() WHERE id=$1`, [bookingId]);
 }
 
-/**
- * Get available time slots for a therapist on a given date.
- */
-async function getAvailableSlots({ therapistId, date, serviceDuration }) {
-  // Get therapist working hours for that day
-  const dow = new Date(date).getDay(); // 0=Sun
-  const { rows: schedule } = await db.query(
-    'SELECT start_time, end_time FROM therapist_weekly_schedule WHERE therapist_id=$1 AND day_of_week=$2 AND is_active=true',
-    [therapistId, dow]
-  );
-  if (!schedule.length) return [];
+async function autoAssign(bookingId) {
+  const booking = await getBookingById(bookingId);
+  const assigned = await autoAssignTherapist({
+    clinicId: booking.clinic_id, bookedDate: booking.booked_date,
+    bookedTime: booking.booked_time, durationMinutes: booking.duration_minutes,
+  });
+  if (!assigned) throw Object.assign(new Error('No available therapist found'), { statusCode: 409 });
 
-  // Get existing bookings
-  const { rows: booked } = await db.query(
-    `SELECT start_time, end_time FROM appointments
-     WHERE therapist_id=$1 AND appointment_date=$2 AND status NOT IN ('cancelled','no_show')`,
-    [therapistId, date]
+  const { rows } = await db.query(
+    `UPDATE bookings SET therapist_id=$1, updated_at=NOW() WHERE id=$2 RETURNING *`,
+    [assigned.id, bookingId]
   );
+  return { booking: rows[0], assignedTherapist: assigned };
+}
 
-  // Generate slots
-  const slots = [];
-  for (const period of schedule) {
-    const start   = _timeToMins(period.start_time);
-    const end     = _timeToMins(period.end_time);
-    let cursor    = start;
-    while (cursor + serviceDuration <= end) {
-      const slotStart = _minsToTime(cursor);
-      const slotEnd   = _minsToTime(cursor + serviceDuration);
-      const isBooked  = booked.some(b => _timeToMins(b.start_time) < cursor + serviceDuration && _timeToMins(b.end_time) > cursor);
-      if (!isBooked) slots.push({ startTime: slotStart, endTime: slotEnd });
-      cursor += serviceDuration;
+async function getAvailableSlots({ therapistId, clinicId, date, serviceDuration }) {
+  const duration = parseInt(serviceDuration, 10) || 60;
+  const dow      = new Date(date).getDay();
+
+  let staffIds = [];
+  if (therapistId) {
+    staffIds = [therapistId];
+  } else if (clinicId) {
+    const { rows } = await db.query(
+      `SELECT cs.id FROM clinic_staff cs WHERE cs.clinic_id=$1 AND cs.status='available'`, [clinicId]
+    );
+    staffIds = rows.map((r) => r.id);
+  }
+
+  if (!staffIds.length) return [];
+
+  const allSlots = new Set();
+
+  for (const sid of staffIds) {
+    const { rows: schedule } = await db.query(
+      `SELECT start_time, end_time FROM staff_availability
+       WHERE staff_id=$1 AND day_of_week=$2 AND is_active=true`,
+      [sid, dow]
+    );
+    if (!schedule.length) continue;
+
+    const { rows: booked } = await db.query(
+      `SELECT booked_time, duration_minutes FROM bookings
+       WHERE therapist_id=$1 AND booked_date=$2 AND status NOT IN ('cancelled','refund_requested')`,
+      [sid, date]
+    );
+
+    for (const period of schedule) {
+      const start  = _toMins(period.start_time);
+      const end    = _toMins(period.end_time);
+      let cursor   = start;
+      while (cursor + duration <= end) {
+        const slotEnd   = cursor + duration;
+        const conflict  = booked.some((b) => {
+          const bStart = _toMins(b.booked_time);
+          const bEnd   = bStart + b.duration_minutes + BUFFER_MINS;
+          return bStart < slotEnd + BUFFER_MINS && bEnd > cursor;
+        });
+        if (!conflict) allSlots.add(_fromMins(cursor));
+        cursor += duration;
+      }
     }
   }
-  return slots;
+
+  return Array.from(allSlots).sort();
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-function _timeToMins(t) {
+// ── Notification helpers ──────────────────────────────────────────────────────
+async function _notifyBookingCreated(booking) {
+  const { rows: patientRows } = await db.query('SELECT email, first_name, last_name FROM users WHERE id=$1', [booking.patient_id]);
+  const { rows: clinicRows }  = await db.query(
+    `SELECT c.name, u.email AS admin_email, u.first_name AS admin_name
+     FROM clinics c
+     LEFT JOIN users u ON u.id = c.owner_id
+     WHERE c.id = $1`, [booking.clinic_id]
+  );
+  const { rows: svcRows } = await db.query('SELECT name FROM services WHERE id=$1', [booking.service_id]);
+
+  const patient = patientRows[0];
+  const clinic  = clinicRows[0];
+  const svc     = svcRows[0];
+
+  if (patient && clinic && svc) {
+    // Notify admin
+    if (clinic.admin_email) {
+      sendBookingCreatedNotification(clinic.admin_email, {
+        clinicAdminName: clinic.admin_name || 'Clinic Admin',
+        reference: booking.reference,
+        patientName: `${patient.first_name} ${patient.last_name}`,
+        date: booking.booked_date,
+        time: booking.booked_time,
+      }).catch(() => {});
+    }
+  }
+}
+
+async function _notifyBookingConfirmed(booking) {
+  const { rows: patientRows } = await db.query('SELECT email, first_name, last_name FROM users WHERE id=$1', [booking.patient_id]);
+  const { rows: clinicRows }  = await db.query('SELECT name, address FROM clinics WHERE id=$1', [booking.clinic_id]);
+  const { rows: svcRows }     = await db.query('SELECT name FROM services WHERE id=$1', [booking.service_id]);
+  const { rows: therapistRows } = await db.query(
+    `SELECT u.first_name || ' ' || u.last_name AS name FROM clinic_staff cs JOIN users u ON u.id=cs.user_id WHERE cs.id=$1`,
+    [booking.therapist_id]
+  );
+
+  const patient   = patientRows[0];
+  const clinic    = clinicRows[0];
+  const svc       = svcRows[0];
+  const therapist = therapistRows[0];
+
+  if (patient && clinic && svc) {
+    sendBookingConfirmation(patient.email, {
+      patientName:   `${patient.first_name} ${patient.last_name}`,
+      reference:     booking.reference,
+      date:          booking.booked_date,
+      time:          booking.booked_time,
+      serviceName:   svc.name,
+      clinicName:    clinic.name,
+      therapistName: therapist?.name || 'TBA',
+      visitMode:     booking.visit_mode,
+    }).catch(() => {});
+  }
+}
+
+async function _promptFeedback(booking) {
+  const { rows: patientRows } = await db.query('SELECT email, first_name FROM users WHERE id=$1', [booking.patient_id]);
+  const patient = patientRows[0];
+  if (patient) {
+    sendFeedbackPrompt(patient.email, {
+      patientName: patient.first_name,
+      reference:   booking.reference,
+      bookingId:   booking.id,
+    }).catch(() => {});
+  }
+}
+
+function _toMins(t) {
   const [h, m] = t.split(':').map(Number);
   return h * 60 + m;
 }
-function _minsToTime(m) {
-  const h = String(Math.floor(m / 60)).padStart(2, '0');
-  const min = String(m % 60).padStart(2, '0');
-  return `${h}:${min}`;
+function _fromMins(m) {
+  return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
 }
 
-module.exports = { createBooking, getBookingById, listBookings, updateBookingStatus, rescheduleBooking, cancelBooking, getAvailableSlots };
+module.exports = {
+  createBooking, getBookingById, listBookings,
+  updateBookingStatus, deleteBooking, autoAssign, getAvailableSlots,
+};

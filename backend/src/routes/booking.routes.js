@@ -1,65 +1,34 @@
 'use strict';
 
 const { Router } = require('express');
-const { body, param, query } = require('express-validator');
-const ctrl     = require('../controllers/booking.controller');
-const validate = require('../middleware/validate');
-const { authenticate } = require('../middleware/auth');
-const { authorize }    = require('../middleware/rbac');
+const ctrl       = require('../controllers/booking.controller');
+const { authenticate, optionalAuth } = require('../middleware/auth');
+const { authorize }                  = require('../middleware/rbac');
 
 const router = Router();
-router.use(authenticate);
 
-// GET  /bookings/slots?therapistId=&date=&serviceDuration=
-router.get('/slots',
-  query('therapistId').isUUID(),
-  query('date').isDate(),
-  query('serviceDuration').isInt({ min: 5 }),
-  validate, ctrl.getAvailableSlots
-);
+// GET  /availability/slots  (public — needed for booking UI before login)
+router.get('/slots', optionalAuth, ctrl.getAvailableSlots);
+
+// All routes below require auth
+router.use(authenticate);
 
 // GET  /bookings
 router.get('/', ctrl.listBookings);
 
-// POST /bookings
-router.post('/',
-  body('clinicId').isUUID(),
-  body('therapistId').isUUID(),
-  body('serviceId').isUUID(),
-  body('appointmentDate').isDate(),
-  body('startTime').matches(/^\d{2}:\d{2}$/),
-  body('endTime').matches(/^\d{2}:\d{2}$/),
-  validate, ctrl.createBooking
-);
+// POST /bookings  [patient]
+router.post('/', authorize('patient', 'clinic_admin', 'super_admin'), ctrl.createBooking);
 
-// GET  /bookings/:bookingId
-router.get('/:bookingId',
-  param('bookingId').isUUID(),
-  validate, ctrl.getBooking
-);
+// POST /bookings/auto-assign  [clinic_admin]
+router.post('/auto-assign', authorize('clinic_admin', 'super_admin'), ctrl.autoAssign);
 
-// PATCH /bookings/:bookingId/status
-router.patch('/:bookingId/status',
-  authorize('super_admin', 'clinic_admin', 'receptionist', 'therapist'),
-  param('bookingId').isUUID(),
-  body('status').isIn(['confirmed', 'cancelled', 'completed', 'no_show']),
-  validate, ctrl.updateBookingStatus
-);
+// GET  /bookings/:id
+router.get('/:id', ctrl.getBooking);
 
-// PUT  /bookings/:bookingId/reschedule
-router.put('/:bookingId/reschedule',
-  param('bookingId').isUUID(),
-  body('appointmentDate').isDate(),
-  body('startTime').matches(/^\d{2}:\d{2}$/),
-  body('endTime').matches(/^\d{2}:\d{2}$/),
-  validate, ctrl.rescheduleBooking
-);
+// PUT  /bookings/:id/status  [clinic_admin, therapist]
+router.put('/:id/status', authorize('clinic_admin', 'therapist', 'super_admin'), ctrl.updateBookingStatus);
 
-// POST /bookings/:bookingId/cancel
-router.post('/:bookingId/cancel',
-  param('bookingId').isUUID(),
-  body('reason').optional().trim(),
-  validate, ctrl.cancelBooking
-);
+// DELETE /bookings/:id  [patient (only pending) or clinic_admin]
+router.delete('/:id', ctrl.deleteBooking);
 
 module.exports = router;

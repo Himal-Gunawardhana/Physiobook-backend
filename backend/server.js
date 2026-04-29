@@ -1,67 +1,43 @@
 'use strict';
 
 require('dotenv').config();
-const http = require('http');
-const app = require('./src/app');
-const { initWebSocket } = require('./src/websocket/chatHandler');
+const app    = require('./src/app');
+const config = require('./src/config');
 const logger = require('./src/utils/logger');
-const { connectDB } = require('./src/config/database');
-const { connectRedis } = require('./src/config/redis');
+const db     = require('./src/config/database');
+const redis  = require('./src/config/redis');
 
-const PORT = process.env.PORT || 4000;
-
-async function bootstrap() {
-  let dbConnected = false;
-  let redisConnected = false;
-
-  // ── Connect to PostgreSQL ────────────────────────────────
+async function start() {
+  // Initialize PostgreSQL pool (retries internally)
   try {
-    await connectDB();
-    logger.info('✅  PostgreSQL connected');
-    dbConnected = true;
+    await db.connectDB();
   } catch (err) {
-    logger.error('⚠️  PostgreSQL connection failed:', err.message);
-    logger.error('   Server will start in degraded mode without database');
+    logger.warn({ err: err.message }, '⚠️  DB connection failed on startup — server will start anyway');
   }
 
-  // ── Connect to Redis ─────────────────────────────────────
-  try {
-    await connectRedis();
-    logger.info('✅  Redis connected');
-    redisConnected = true;
-  } catch (err) {
-    logger.error('⚠️  Redis connection failed:', err.message);
-    logger.error('   Server will start in degraded mode without cache');
-  }
-
-  // ── Create HTTP server ───────────────────────────────────
-  const server = http.createServer(app);
-
-  // ── Attach WebSocket (real-time chat) ────────────────────
-  initWebSocket(server);
-  logger.info('✅  WebSocket server attached');
-
-  // ── Start listening ──────────────────────────────────────
-  server.listen(PORT, () => {
-    const mode = (dbConnected && redisConnected) ? 'normal' : 'degraded';
-    logger.info(`🚀  Physiobook API running on port ${PORT} [${process.env.NODE_ENV}] (${mode} mode)`);
-    
-    if (!dbConnected || !redisConnected) {
-      logger.warn('⚠️  Server started but some services are unavailable.');
-      logger.warn('   API endpoints may fail until services are restored.');
-    }
+  const server = app.listen(config.port, () => {
+    logger.info(`🚀 Physiobook API v2 running on port ${config.port} [${config.env}]`);
+    logger.info(`   Health: http://localhost:${config.port}/health`);
+    logger.info(`   API:    http://localhost:${config.port}/api/${config.api.version}`);
   });
 
-  // ── Graceful shutdown ────────────────────────────────────
-  const shutdown = (signal) => {
-    logger.warn(`${signal} received – shutting down gracefully`);
-    server.close(() => {
-      logger.info('HTTP server closed');
+  async function shutdown(signal) {
+    logger.info({ signal }, 'Shutting down gracefully...');
+    server.close(async () => {
+      try { await db.end();     logger.info('PostgreSQL pool closed'); } catch (_) {}
+      try { await redis.quit(); logger.info('Redis connection closed'); } catch (_) {}
+      logger.info('Shutdown complete');
       process.exit(0);
     });
-  };
+    setTimeout(() => { logger.error('Forced exit after timeout'); process.exit(1); }, 10000);
+  }
+
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT',  () => shutdown('SIGINT'));
+  process.on('unhandledRejection', (reason) => logger.error({ reason }, 'Unhandled promise rejection'));
+  process.on('uncaughtException',  (err)    => { logger.fatal({ err }, 'Uncaught exception'); process.exit(1); });
+
+  return server;
 }
 
-bootstrap();
+start().catch((err) => { console.error('Fatal startup error:', err); process.exit(1); });

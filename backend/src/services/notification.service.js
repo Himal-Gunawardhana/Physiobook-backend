@@ -1,120 +1,64 @@
 'use strict';
 
-const { sendEmail } = require('../config/mail');
-const config        = require('../config/index');
-const logger        = require('../utils/logger');
+const { v4: uuidv4 } = require('uuid');
+const db = require('../config/database');
+const { sendEmail } = require('../utils/sendEmail');
+const { sendSms }   = require('../utils/sendSms');
 
-// ── PLACEHOLDER: Twilio SMS (install twilio package and uncomment)
-// const twilio = require('twilio')(config.twilio.accountSid, config.twilio.authToken);
+async function getNotifications(userId, { page = 1, limit = 20 } = {}) {
+  const offset = (page - 1) * limit;
+  const { rows } = await db.query(
+    `SELECT * FROM notifications WHERE user_id=$1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
+    [userId, limit, offset]
+  );
+  const { rows: cr } = await db.query(
+    `SELECT COUNT(*) AS total, COUNT(*) FILTER (WHERE is_read=false) AS unread FROM notifications WHERE user_id=$1`,
+    [userId]
+  );
+  return { rows, total: parseInt(cr[0].total, 10), unreadCount: parseInt(cr[0].unread, 10) };
+}
 
-/**
- * Send email verification link to newly registered user.
- */
-async function sendEmailVerification(email, firstName, token) {
-  try {
-    // For local testing, we point the link directly to the backend API to execute the verification
-    const link = `http://localhost:${config.port}/api/v1/auth/verify-email?token=${token}`;
-    await sendEmail({
-      to:      email,
-      subject: 'Verify your Physiobook account',
-      html:    `
-        <h2>Welcome to Physiobook, ${firstName}!</h2>
-        <p>Please verify your email address by clicking the button below.</p>
-        <a href="${link}" style="background:#4A90D9;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;display:inline-block;">
-          Verify Email
-        </a>
-        <p>This link expires in 24 hours.</p>
-        <p>If you did not create an account, please ignore this email.</p>
-      `,
-    });
-  } catch (err) {
-    logger.error(`Failed to send verification email to ${email}:`, err);
+async function sendBulkNotification({ userIds, title, message, channel }) {
+  let sent = 0;
+
+  const { rows: users } = await db.query(
+    `SELECT id, email, phone, notification_prefs FROM users WHERE id = ANY($1::uuid[]) AND is_active=true`,
+    [userIds]
+  );
+
+  for (const user of users) {
+    const prefs = user.notification_prefs || {};
+
+    // In-app notification
+    await db.query(
+      `INSERT INTO notifications (id, user_id, title, message) VALUES ($1,$2,$3,$4)`,
+      [uuidv4(), user.id, title, message]
+    );
+
+    if ((channel === 'email' || channel === 'both') && prefs.email !== false && user.email) {
+      sendEmail({ to: user.email, subject: title, html: `<p>${message}</p>` }).catch(() => {});
+    }
+    if ((channel === 'sms' || channel === 'both') && prefs.sms !== false && user.phone) {
+      sendSms(user.phone, `${title}: ${message}`).catch(() => {});
+    }
+    sent++;
   }
+
+  return sent;
 }
 
-/**
- * Send password reset link.
- */
-async function sendPasswordReset(email, firstName, token) {
-  const link = `${config.frontendUrl}/reset-password?token=${token}`;
-  await sendEmail({
-    to:      email,
-    subject: 'Reset your Physiobook password',
-    html:    `
-      <h2>Password Reset Request</h2>
-      <p>Hi ${firstName}, we received a request to reset your password.</p>
-      <a href="${link}" style="background:#E74C3C;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;display:inline-block;">
-        Reset Password
-      </a>
-      <p>This link expires in 1 hour. If you didn't request this, please ignore it.</p>
-    `,
-  });
+async function markRead(notifId, userId) {
+  await db.query(
+    `UPDATE notifications SET is_read=true WHERE id=$1 AND user_id=$2`, [notifId, userId]
+  );
 }
 
-/**
- * Send booking confirmation to patient (email + SMS placeholder).
- */
-async function sendBookingConfirmation(patientId, booking) {
-  try {
-    // PLACEHOLDER: Fetch patient email/phone from DB if needed
-    // For now this is triggered by bookingService which already has the patient data.
-    logger.info(`[NOTIFICATION] Booking confirmation queued for booking ${booking.id}`);
-
-    // PLACEHOLDER: SMS notification via Twilio
-    // await twilio.messages.create({
-    //   to:   patient.phone,
-    //   from: config.twilio.phoneNumber,
-    //   body: `Your Physiobook appointment (${booking.booking_ref}) is confirmed for ${booking.appointment_date} at ${booking.start_time}.`,
-    // });
-  } catch (err) {
-    logger.error('sendBookingConfirmation failed:', err);
-  }
+// Internal helper — create in-app notification
+async function createNotification(userId, { title, message, type = 'general', metadata = {} }) {
+  await db.query(
+    `INSERT INTO notifications (id, user_id, title, message, type, metadata) VALUES ($1,$2,$3,$4,$5,$6)`,
+    [uuidv4(), userId, title, message, type, JSON.stringify(metadata)]
+  );
 }
 
-/**
- * Send booking status change notification.
- */
-async function sendBookingStatusUpdate(patientId, booking, status) {
-  try {
-    logger.info(`[NOTIFICATION] Booking ${booking.id} status changed to ${status}`);
-    // PLACEHOLDER: Email / push notification
-  } catch (err) {
-    logger.error('sendBookingStatusUpdate failed:', err);
-  }
-}
-
-/**
- * Send appointment reminder (called by a scheduler / cron job).
- * PLACEHOLDER: Wire this to a cron job (e.g., node-cron, AWS EventBridge).
- */
-async function sendAppointmentReminder(appointment) {
-  try {
-    logger.info(`[NOTIFICATION] Reminder for appointment ${appointment.id}`);
-    // PLACEHOLDER: Email reminder 24h and 1h before appointment
-  } catch (err) {
-    logger.error('sendAppointmentReminder failed:', err);
-  }
-}
-
-/**
- * Send staff welcome email with temporary password.
- */
-async function sendStaffWelcome(email, firstName, tempPassword) {
-  try {
-    await sendEmail({
-      to:      email,
-      subject: 'Welcome to Physiobook — Your Account Details',
-      html:    `
-        <h2>Welcome, ${firstName}!</h2>
-        <p>Your Physiobook staff account has been created.</p>
-        <p><strong>Temporary Password:</strong> <code>${tempPassword}</code></p>
-        <p>Please log in and change your password immediately.</p>
-        <a href="${config.frontendUrl}/login">Log in to Physiobook</a>
-      `,
-    });
-  } catch (err) {
-    logger.error(`Failed to send staff welcome email to ${email}:`, err);
-  }
-}
-
-module.exports = { sendEmailVerification, sendPasswordReset, sendBookingConfirmation, sendBookingStatusUpdate, sendAppointmentReminder, sendStaffWelcome };
+module.exports = { getNotifications, sendBulkNotification, markRead, createNotification };

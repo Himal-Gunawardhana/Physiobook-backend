@@ -1,82 +1,89 @@
 'use strict';
 
-/**
- * Central application configuration
- * All values sourced from environment variables.
- * Never hard-code secrets here.
- */
-module.exports = {
+require('dotenv').config();
+
+const config = {
   env:  process.env.NODE_ENV || 'development',
-  port: parseInt(process.env.PORT, 10) || 4000,
+  port: parseInt(process.env.PORT, 10) || 3000,
+
+  api: {
+    version: process.env.API_VERSION || 'v1',
+  },
 
   db: {
-    host:     process.env.DB_HOST,
-    port:     parseInt(process.env.DB_PORT, 10) || 5432,
-    database: process.env.DB_NAME,
-    user:     process.env.DB_USER,
-    password: process.env.DB_PASSWORD,
-    ssl:      process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
-    pool: {
-      min: parseInt(process.env.DB_POOL_MIN, 10) || 2,
-      max: parseInt(process.env.DB_POOL_MAX, 10) || 10,
-    },
+    url: process.env.DATABASE_URL,
   },
 
   redis: {
-    host:     process.env.REDIS_HOST || 'localhost',
-    port:     parseInt(process.env.REDIS_PORT, 10) || 6379,
-    password: process.env.REDIS_PASSWORD || undefined,
-    tls:      process.env.REDIS_TLS === 'true' ? {} : undefined,
+    url: process.env.REDIS_URL || 'redis://localhost:6379',
   },
 
   jwt: {
-    accessSecret:  process.env.JWT_ACCESS_SECRET,
-    refreshSecret: process.env.JWT_REFRESH_SECRET,
-    accessExpiresIn:  process.env.JWT_ACCESS_EXPIRES_IN  || '15m',
-    refreshExpiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '7d',
+    // RS256 — keys stored as base64 in env
+    privateKey: process.env.JWT_PRIVATE_KEY
+      ? Buffer.from(process.env.JWT_PRIVATE_KEY, 'base64').toString('utf8')
+      : process.env.JWT_SECRET || 'dev-secret-change-in-production',
+    publicKey: process.env.JWT_PUBLIC_KEY
+      ? Buffer.from(process.env.JWT_PUBLIC_KEY, 'base64').toString('utf8')
+      : process.env.JWT_SECRET || 'dev-secret-change-in-production',
+    algorithm: process.env.JWT_PRIVATE_KEY ? 'RS256' : 'HS256',
+    accessExpires:  process.env.JWT_ACCESS_EXPIRES  || '15m',
+    refreshExpires: process.env.JWT_REFRESH_EXPIRES || '7d',
+    otpExpires: '10m',
   },
 
-  stripe: {
-    secretKey:      process.env.STRIPE_SECRET_KEY,
-    webhookSecret:  process.env.STRIPE_WEBHOOK_SECRET,
-    currency:       process.env.STRIPE_CURRENCY || 'LKR',
-  },
-
-  email: {
-    provider: process.env.EMAIL_PROVIDER || 'smtp',
-    from:     `"${process.env.EMAIL_FROM_NAME || 'Physiobook'}" <${process.env.EMAIL_FROM_ADDRESS}>`,
-    smtp: {
-      host:   process.env.SMTP_HOST,
-      port:   parseInt(process.env.SMTP_PORT, 10) || 587,
-      secure: process.env.SMTP_SECURE === 'true',
-      auth:   { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
-    },
-    sendgridApiKey: process.env.SENDGRID_API_KEY,
-  },
-
-  twilio: {
-    accountSid:  process.env.TWILIO_ACCOUNT_SID,
-    authToken:   process.env.TWILIO_AUTH_TOKEN,
-    phoneNumber: process.env.TWILIO_PHONE_NUMBER,
-  },
-
-  aws: {
-    accessKeyId:     process.env.AWS_S3_ACCESS_KEY_ID,
-    secretAccessKey: process.env.AWS_S3_SECRET_ACCESS_KEY,
-    s3Bucket:        process.env.AWS_S3_BUCKET,
-    s3Region:        process.env.AWS_S3_REGION || 'us-east-1',
-  },
-
-  totp: {
-    appName: process.env.TOTP_APP_NAME || 'Physiobook',
+  cors: {
+    origins: (process.env.CORS_ORIGINS || 'http://localhost:5173,http://localhost:3000,http://localhost:5174')
+      .split(',')
+      .map((o) => o.trim())
+      .filter(Boolean),
   },
 
   rateLimit: {
-    windowMs:    parseInt(process.env.RATE_LIMIT_WINDOW_MS, 10)     || 900000,
-    max:         parseInt(process.env.RATE_LIMIT_MAX_REQUESTS, 10)  || 100,
-    authMax:     parseInt(process.env.AUTH_RATE_LIMIT_MAX, 10)      || 10,
+    windowMs:  60 * 1000, // 1 minute
+    max:       100,
+    authMax:   10,
+    otpMax:    5,
   },
 
-  frontendUrl: process.env.FRONTEND_URL || 'http://localhost:3000',
-  logLevel:    process.env.LOG_LEVEL    || 'info',
+  sendgrid: {
+    apiKey:    process.env.SENDGRID_API_KEY || '',
+    fromEmail: process.env.SENDGRID_FROM_EMAIL || 'no-reply@physiobook.com',
+    fromName:  'Physiobook',
+  },
+
+  smtp: {
+    host:     process.env.SMTP_HOST     || 'smtp.sendgrid.net',
+    port:     parseInt(process.env.SMTP_PORT, 10) || 587,
+    user:     process.env.SMTP_USER     || 'apikey',
+    pass:     process.env.SMTP_PASS     || process.env.SENDGRID_API_KEY || '',
+    fromEmail: process.env.SENDGRID_FROM_EMAIL || 'no-reply@physiobook.com',
+    fromName:  'Physiobook',
+  },
+
+  twilio: {
+    accountSid: process.env.TWILIO_ACCOUNT_SID || '',
+    authToken:  process.env.TWILIO_AUTH_TOKEN  || '',
+    fromNumber: process.env.TWILIO_FROM_NUMBER || '',
+  },
+
+  stripe: {
+    secretKey:     process.env.STRIPE_SECRET_KEY     || '',
+    webhookSecret: process.env.STRIPE_WEBHOOK_SECRET || '',
+    currency:      'usd', // Stripe billing currency (LKR stored internally)
+  },
+
+  s3: {
+    accessKeyId:     process.env.AWS_ACCESS_KEY_ID     || '',
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || '',
+    bucket:          process.env.AWS_S3_BUCKET         || 'physiobook-assets',
+    region:          process.env.AWS_REGION            || 'ap-south-1',
+    endpoint:        process.env.AWS_ENDPOINT          || '', // Cloudflare R2 endpoint
+  },
+
+  totp: {
+    appName: 'Physiobook',
+  },
 };
+
+module.exports = config;

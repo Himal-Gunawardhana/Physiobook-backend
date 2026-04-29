@@ -1,56 +1,67 @@
 'use strict';
 
-const paymentService = require('../services/payment.service');
-const R              = require('../utils/response');
+const svc = require('../services/payment.service');
+const R   = require('../utils/response');
 
-async function createPaymentIntent(req, res, next) {
+async function createPayment(req, res, next) {
   try {
     const patientId = req.user.role === 'patient' ? req.user.id : req.body.patientId;
-    const result = await paymentService.createPaymentIntent({ ...req.body, patientId });
+    const result = await svc.createPayment({ ...req.body, patientId });
     return R.created(res, result);
+  } catch (err) { next(err); }
+}
+
+async function getPayment(req, res, next) {
+  try { return R.success(res, await svc.getPaymentById(req.params.id)); }
+  catch (err) { next(err); }
+}
+
+async function listPayments(req, res, next) {
+  try {
+    let { clinicId, status, from, to, page, limit } = req.query;
+    if (req.user.role === 'clinic_admin') clinicId = req.user.clinicId;
+    const result = await svc.listPayments({ clinicId, status, from, to, page: +page || 1, limit: +limit || 20 });
+    return R.paginated(res, result.rows, { total: result.total, page: +page || 1, limit: +limit || 20 }, { totalRevenue: result.totalRevenue });
+  } catch (err) { next(err); }
+}
+
+async function markPaid(req, res, next) {
+  try { return R.success(res, await svc.markPaid(req.params.id)); }
+  catch (err) { next(err); }
+}
+
+async function refundPayment(req, res, next) {
+  try {
+    const result = await svc.refundPayment(req.params.id, req.body);
+    return R.success(res, result);
   } catch (err) { next(err); }
 }
 
 async function stripeWebhook(req, res, next) {
   try {
-    // req.body is raw Buffer here (see app.js for raw body middleware on this path)
     const sig = req.headers['stripe-signature'];
-    const result = await paymentService.handleWebhook(req.body, sig);
-    return R.success(res, result);
+    await svc.handleWebhook(req.body, sig);
+    return res.json({ received: true });
   } catch (err) { next(err); }
 }
 
-async function refundPayment(req, res, next) {
+async function exportPayments(req, res, next) {
   try {
-    const result = await paymentService.refundPayment(req.params.paymentId, req.body);
-    return R.success(res, result);
+    const { clinicId, from, to } = req.query;
+    const rows = await svc.exportPayments({ clinicId: req.user.role === 'clinic_admin' ? req.user.clinicId : clinicId, from, to });
+
+    const header = 'Reference,Amount,Currency,Method,Status,Paid At,Patient,Email,Service,Clinic\n';
+    const csv    = header + rows.map((r) =>
+      [r.booking_reference, r.amount, r.currency, r.method, r.status,
+       r.paid_at || '', r.patient_name, r.patient_email, r.service_name, r.clinic_name]
+        .map((v) => `"${String(v || '').replace(/"/g, '""')}"`)
+        .join(',')
+    ).join('\n');
+
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="payments-${Date.now()}.csv"`);
+    return res.send(csv);
   } catch (err) { next(err); }
 }
 
-async function getPayment(req, res, next) {
-  try {
-    const payment = await paymentService.getPaymentById(req.params.paymentId);
-    return R.success(res, payment);
-  } catch (err) { next(err); }
-}
-
-async function listPayments(req, res, next) {
-  try {
-    const { page, limit, status } = req.query;
-    const clinicId  = req.user.role !== 'super_admin' ? req.user.clinicId : req.query.clinicId;
-    const patientId = req.user.role === 'patient'     ? req.user.id       : req.query.patientId;
-    const result    = await paymentService.listPayments({ page, limit, clinicId, patientId, status });
-    return R.paginated(res, result.rows, { page: page || 1, limit: limit || 20, total: result.total });
-  } catch (err) { next(err); }
-}
-
-async function getRevenueSummary(req, res, next) {
-  try {
-    const clinicId = req.user.role !== 'super_admin' ? req.user.clinicId : req.query.clinicId;
-    const { dateFrom = new Date(new Date().setDate(1)).toISOString().split('T')[0], dateTo = new Date().toISOString().split('T')[0] } = req.query;
-    const summary = await paymentService.getRevenueSummary(clinicId, { dateFrom, dateTo });
-    return R.success(res, summary);
-  } catch (err) { next(err); }
-}
-
-module.exports = { createPaymentIntent, stripeWebhook, refundPayment, getPayment, listPayments, getRevenueSummary };
+module.exports = { createPayment, getPayment, listPayments, markPaid, refundPayment, stripeWebhook, exportPayments };
