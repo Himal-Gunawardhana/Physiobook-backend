@@ -7,8 +7,9 @@ const config              = require('../config');
 
 function makeStore(prefix) {
   return new RedisStore({
-    // rate-limit-redis v4: sendCommand receives { command: ['CMD', ...args] }
-    sendCommand: ({ command }) => redis.call(command[0], ...command.slice(1)),
+    // rate-limit-redis v4 wraps sendCommand and calls it as fn(...command),
+    // so we accept spread args and forward them to ioredis .call()
+    sendCommand: (...args) => redis.call(...args),
     prefix,
   });
 }

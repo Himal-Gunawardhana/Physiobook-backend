@@ -2,6 +2,32 @@
 
 require('dotenv').config();
 
+// ---------------------------------------------------------------------------
+// Build DATABASE_URL from individual DB_* vars if not provided directly
+// ---------------------------------------------------------------------------
+function buildDatabaseUrl() {
+  if (process.env.DATABASE_URL) return process.env.DATABASE_URL;
+  const { DB_USER, DB_PASSWORD, DB_HOST, DB_PORT, DB_NAME } = process.env;
+  if (!DB_HOST || !DB_NAME) return undefined;
+  const user = encodeURIComponent(DB_USER || 'postgres');
+  const pass = encodeURIComponent(DB_PASSWORD || '');
+  const port = DB_PORT || 5432;
+  return `postgresql://${user}:${pass}@${DB_HOST}:${port}/${DB_NAME}`;
+}
+
+// ---------------------------------------------------------------------------
+// Build Redis URL from individual REDIS_* vars if not provided directly
+// ---------------------------------------------------------------------------
+function buildRedisUrl() {
+  if (process.env.REDIS_URL) return process.env.REDIS_URL;
+  const { REDIS_HOST, REDIS_PORT, REDIS_PASSWORD, REDIS_TLS } = process.env;
+  if (!REDIS_HOST) return 'redis://localhost:6379';
+  const scheme = (REDIS_TLS === 'true' || REDIS_TLS === '1') ? 'rediss' : 'redis';
+  const port   = REDIS_PORT || 6379;
+  const auth   = REDIS_PASSWORD ? `:${encodeURIComponent(REDIS_PASSWORD)}@` : '';
+  return `${scheme}://${auth}${REDIS_HOST}:${port}`;
+}
+
 const config = {
   env:  process.env.NODE_ENV || 'development',
   port: parseInt(process.env.PORT, 10) || 3000,
@@ -11,21 +37,29 @@ const config = {
   },
 
   db: {
-    url: process.env.DATABASE_URL,
+    url: buildDatabaseUrl(),
   },
 
   redis: {
-    url: process.env.REDIS_URL || 'redis://localhost:6379',
+    url: buildRedisUrl(),
   },
 
   jwt: {
-    // RS256 — keys stored as base64 in env
+    // HS256 with separate secrets per token type.
+    // Falls back to JWT_SECRET (legacy) or a dev placeholder if nothing is set.
+    accessSecret:  process.env.JWT_ACCESS_SECRET
+                || process.env.JWT_SECRET
+                || 'dev-access-secret-change-in-production',
+    refreshSecret: process.env.JWT_REFRESH_SECRET
+                || process.env.JWT_SECRET
+                || 'dev-refresh-secret-change-in-production',
+    // RS256 keypair — only used when JWT_PRIVATE_KEY is set
     privateKey: process.env.JWT_PRIVATE_KEY
       ? Buffer.from(process.env.JWT_PRIVATE_KEY, 'base64').toString('utf8')
-      : process.env.JWT_SECRET || 'dev-secret-change-in-production',
+      : null,
     publicKey: process.env.JWT_PUBLIC_KEY
       ? Buffer.from(process.env.JWT_PUBLIC_KEY, 'base64').toString('utf8')
-      : process.env.JWT_SECRET || 'dev-secret-change-in-production',
+      : null,
     algorithm: process.env.JWT_PRIVATE_KEY ? 'RS256' : 'HS256',
     accessExpires:  process.env.JWT_ACCESS_EXPIRES  || '15m',
     refreshExpires: process.env.JWT_REFRESH_EXPIRES || '7d',
