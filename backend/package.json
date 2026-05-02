@@ -12,7 +12,12 @@
     "lint": "eslint src/**/*.js",
     "test": "jest --coverage"
   },
-  "keywords": ["physiobook", "physiotherapy", "booking", "api"],
+  "keywords": [
+    "physiobook",
+    "physiotherapy",
+    "booking",
+    "api"
+  ],
   "author": "Physiobook Team",
   "license": "MIT",
   "dependencies": {
@@ -38,6 +43,7 @@
     "pino-http": "^10.3.0",
     "qrcode": "^1.5.3",
     "rate-limit-redis": "^4.2.0",
+    "resend": "^6.4.2",
     "stripe": "^15.11.0",
     "twilio": "^5.3.7",
     "uuid": "^9.0.1",

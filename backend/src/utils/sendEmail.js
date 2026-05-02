@@ -1,53 +1,88 @@
 'use strict';
 
-const nodemailer = require('nodemailer');
-const config     = require('../config');
-const logger     = require('./logger');
+const config = require('../config');
+const logger = require('./logger');
 
-// Use SendGrid API key if provided, otherwise fall back to SMTP config
-let transporter;
+// ── Email provider selection ───────────────────────────────────────────────
+// Priority: Resend → SendGrid (nodemailer) → Generic SMTP
 
-if (config.sendgrid.apiKey) {
-  // SendGrid via Nodemailer SMTP relay
-  transporter = nodemailer.createTransport({
-    host: 'smtp.sendgrid.net',
-    port: 587,
-    auth: {
-      user: 'apikey',
-      pass: config.sendgrid.apiKey,
-    },
-  });
-} else {
-  // Generic SMTP (dev / other providers)
-  transporter = nodemailer.createTransport({
-    host: config.smtp.host,
-    port: config.smtp.port,
-    secure: config.smtp.port === 465,
-    auth: {
-      user: config.smtp.user,
-      pass: config.smtp.pass,
-    },
-  });
+const RESEND_API_KEY = process.env.RESEND_API_KEY;
+const FROM_NAME      = process.env.EMAIL_FROM_NAME  || 'Physiobook';
+const FROM_ADDRESS   = process.env.EMAIL_FROM       || config.sendgrid.fromEmail || 'onboarding@resend.dev';
+const FROM           = `"${FROM_NAME}" <${FROM_ADDRESS}>`;
+
+// Lazy-load Resend client only if key is present
+let _resend = null;
+function getResend() {
+  if (!_resend) {
+    const { Resend } = require('resend');
+    _resend = new Resend(RESEND_API_KEY);
+  }
+  return _resend;
 }
 
-const FROM = `"${config.sendgrid.fromName}" <${config.sendgrid.fromEmail}>`;
+// Nodemailer transporter (SendGrid or SMTP fallback)
+let _transporter = null;
+function getTransporter() {
+  if (_transporter) return _transporter;
+  const nodemailer = require('nodemailer');
+  if (config.sendgrid.apiKey) {
+    _transporter = nodemailer.createTransport({
+      host: 'smtp.sendgrid.net',
+      port: 587,
+      auth: { user: 'apikey', pass: config.sendgrid.apiKey },
+    });
+  } else {
+    _transporter = nodemailer.createTransport({
+      host: config.smtp.host,
+      port: config.smtp.port,
+      secure: config.smtp.port === 465,
+      auth: { user: config.smtp.user, pass: config.smtp.pass },
+    });
+  }
+  return _transporter;
+}
 
 /**
  * Send a transactional email.
+ * Uses Resend if RESEND_API_KEY is set, otherwise SendGrid/SMTP via nodemailer.
  * @param {Object} opts - { to, subject, html, text? }
  */
 async function sendEmail({ to, subject, html, text }) {
+  // ── Resend (preferred) ──────────────────────────────────────────
+  if (RESEND_API_KEY) {
+    try {
+      const resend = getResend();
+      const { data, error } = await resend.emails.send({
+        from: FROM,
+        to:   Array.isArray(to) ? to : [to],
+        subject,
+        html,
+        text,
+      });
+      if (error) {
+        logger.error({ error, to, subject }, '[Email/Resend] Failed to send');
+        return;
+      }
+      logger.info({ to, subject, id: data?.id }, '[Email/Resend] Sent');
+      return data;
+    } catch (err) {
+      logger.error({ err, to, subject }, '[Email/Resend] Exception');
+      return; // Don't throw — email failure should not break API
+    }
+  }
+
+  // ── Nodemailer fallback (SendGrid SMTP / generic SMTP) ──────────
   if (!config.sendgrid.apiKey && !config.smtp.pass) {
     logger.warn({ to, subject }, '[Email] No email provider configured — skipping send');
     return;
   }
   try {
-    const info = await transporter.sendMail({ from: FROM, to, subject, html, text });
-    logger.info({ to, subject, messageId: info.messageId }, '[Email] Sent');
+    const info = await getTransporter().sendMail({ from: FROM, to, subject, html, text });
+    logger.info({ to, subject, messageId: info.messageId }, '[Email/SMTP] Sent');
     return info;
   } catch (err) {
-    logger.error({ err, to, subject }, '[Email] Failed to send');
-    // Don't throw — email failures should not break the API flow
+    logger.error({ err, to, subject }, '[Email/SMTP] Failed to send');
   }
 }
 
