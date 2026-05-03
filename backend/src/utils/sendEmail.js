@@ -8,7 +8,12 @@ const logger = require('./logger');
 
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
 const FROM_NAME      = process.env.EMAIL_FROM_NAME  || 'Physiobook';
-const FROM_ADDRESS   = process.env.EMAIL_FROM       || config.sendgrid.fromEmail || 'onboarding@resend.dev';
+// For SMTP (including Zoho), use SMTP_USER as FROM if EMAIL_FROM not set
+// Zoho requires FROM to match authenticated email
+const FROM_ADDRESS   = process.env.EMAIL_FROM 
+                      || (process.env.SMTP_USER && !RESEND_API_KEY ? process.env.SMTP_USER : null)
+                      || config.sendgrid.fromEmail 
+                      || 'onboarding@resend.dev';
 const FROM           = `"${FROM_NAME}" <${FROM_ADDRESS}>`;
 
 // Lazy-load Resend client only if key is present
